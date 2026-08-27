@@ -180,6 +180,47 @@ tr:last-child td { border-bottom: none; }
 .capture video { width: 100%; border-radius: var(--r-sm); background: #000; }
 .capture { display: flex; flex-direction: column; gap: 10px; }
 
+/* Camera not available — graceful fallback panel */
+.camera-fallback {
+  background: #150e0a;
+  border: 1px dashed #6b4020;
+  border-radius: var(--r-md);
+  padding: 24px 20px;
+  text-align: center;
+  margin: 4px 0;
+}
+.camera-fallback-icon  { font-size: 2.2rem; margin-bottom: 8px; filter: grayscale(1); opacity: 0.6; }
+.camera-fallback-title { font-size: 1rem; font-weight: 700; color: #d08050; margin: 0 0 6px; }
+.camera-fallback-msg   { font-size: 13px; color: var(--muted); margin: 0 0 16px; }
+.camera-fallback-tips  { text-align: left; font-size: 13px; color: var(--muted); }
+.camera-fallback-tips ul { padding-left: 18px; margin: 8px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.camera-fallback-tips li { list-style: disc; }
+
+/* Camera permission requesting spinner */
+.camera-requesting {
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: #0d1210;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 24px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.camera-requesting-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* ──────────────────────────────────────────────────────────────────────────── */
 /*  HOME                                                                        */
 /* ──────────────────────────────────────────────────────────────────────────── */
