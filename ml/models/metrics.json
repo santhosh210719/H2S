@@ -9,17 +9,42 @@
     "patch_g",
     "patch_b"
   ],
-  "mae": 0.1813,
-  "rmse": 0.2444,
-  "note": "Synthetic colorimetric mapping for SIH demo \u2014 replace with lab-calibrated pairs later.",
+  "n_train": 800,
+  "n_val": 200,
+  "mae": 1.3472,
+  "rmse": 1.824,
+  "r2": 0.9744,
+  "per_band": {
+    "fresh": {
+      "n": 9,
+      "mae": 0.1978,
+      "rmse": 0.2342
+    },
+    "low": {
+      "n": 12,
+      "mae": 0.5262,
+      "rmse": 0.7975
+    },
+    "medium": {
+      "n": 90,
+      "mae": 1.0698,
+      "rmse": 1.3762
+    },
+    "high": {
+      "n": 89,
+      "mae": 1.8547,
+      "rmse": 2.3387
+    }
+  },
   "importance": {
-    "L": 0.381325364112854,
-    "a": 3.746094080270268e-05,
-    "b": 5.9779620642075315e-05,
-    "darkness": 0.0016238153912127018,
-    "rel_dark": 0.6084218621253967,
-    "patch_r": 0.0007044480880722404,
-    "patch_g": 0.0009348852327093482,
-    "patch_b": 0.006892412435263395
-  }
+    "L": 0.1331,
+    "a": 0.0029,
+    "b": 0.0023,
+    "darkness": 0.511,
+    "rel_dark": 0.144,
+    "patch_r": 0.1844,
+    "patch_g": 0.0185,
+    "patch_b": 0.0038
+  },
+  "note": "Phase 2 \u2014 trained on image-derived features from generate_dataset.py (or fallback). Replace with lab-calibrated pairs for production."
 }
