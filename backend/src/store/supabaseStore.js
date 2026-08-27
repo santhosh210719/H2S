@@ -1,5 +1,5 @@
 import { supabaseAdmin, STORAGE_BUCKET } from "../lib/supabase.js";
-import { USED_MSG, mockDose } from "../lib/doseStub.js";
+import { USED_MSG } from "../lib/doseStub.js";
 
 export const supabaseStore = {
   mode: "supabase",
@@ -71,19 +71,17 @@ export const supabaseStore = {
     return { ok: true, wristband: wb, binding, worker };
   },
 
-  async insertScan({ wristband_qr, imageBuffer, mime, filename, quality_status }) {
+  /**
+   * insertScan — persist a scan result.
+   * Pass real dose_ppm_h/confidence/risk_band from the ML pipeline (route layer).
+   * quality_status: "pass" | "blur" | "glare"
+   * When quality_status != "pass", dose fields are null — scan is still logged for auditing.
+   */
+  async insertScan({ wristband_qr, imageBuffer, mime, filename, quality_status, dose_ppm_h, confidence, risk_band, kiosk_id }) {
     const looked = await this.lookupBand(wristband_qr);
     if (!looked.ok) return looked;
-    if (quality_status && quality_status !== "pass") {
-      return {
-        ok: false,
-        status: 422,
-        code: "QUALITY_FAIL",
-        error: "Image unclear — please re-scan",
-        quality_status,
-      };
-    }
 
+    // Upload image regardless of quality (useful for audit/debugging)
     let image_url = null;
     if (imageBuffer) {
       const objectPath = `${looked.binding.id}/${Date.now()}-${(filename || "scan.jpg").replace(/[^\w.-]/g, "_")}`;
@@ -94,18 +92,29 @@ export const supabaseStore = {
       if (!upErr) image_url = objectPath;
     }
 
-    const dummy = mockDose(wristband_qr);
+    const isPass = !quality_status || quality_status === "pass";
     const row = {
       wristband_qr,
       image_url,
-      quality_status: "pass",
-      dose_ppm_h: dummy.dose_ppm_h,
-      confidence: dummy.confidence,
-      risk_band: dummy.risk_band,
+      quality_status: isPass ? "pass" : quality_status,
+      dose_ppm_h: isPass ? (dose_ppm_h ?? null) : null,
+      confidence: isPass ? (confidence ?? null) : null,
+      risk_band: isPass ? (risk_band ?? null) : null,
     };
     const { data: scan, error } = await supabaseAdmin.from("scan_logs").insert(row).select("*").single();
     if (error) return { ok: false, status: 500, error: error.message };
-    return { ok: true, scan: { ...scan, worker_id: looked.worker.worker_id }, worker: looked.worker, dummy: true };
+
+    if (!isPass) {
+      return {
+        ok: false,
+        status: 422,
+        code: "QUALITY_FAIL",
+        error: `Image unclear — please re-scan (${quality_status})`,
+        quality_status,
+        scan, // logged row for reference
+      };
+    }
+    return { ok: true, scan: { ...scan, worker_id: looked.worker.worker_id }, worker: looked.worker };
   },
 
   async listWorkers() {

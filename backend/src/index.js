@@ -12,6 +12,7 @@ import multer from "multer";
 import { kioskRouter } from "./routes/kiosk.js";
 import { adminRouter } from "./routes/admin.js";
 import { store } from "./store/index.js";
+import { analyzeBadgeImage } from "./lib/mlClient.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
@@ -62,6 +63,7 @@ app.post("/api/bind-wristband", async (req, res) => {
 
 /**
  * POST /api/scan
+ * Spec-required flat route — same real pipeline as /api/kiosk/scan.
  * Multipart: image (file) + wristband_qr (field)
  */
 app.post("/api/scan", upload.single("image"), async (req, res) => {
@@ -69,29 +71,40 @@ app.post("/api/scan", upload.single("image"), async (req, res) => {
   if (!wristband_qr) return res.status(400).json({ ok: false, error: "wristband_qr required." });
   if (!req.file?.buffer) return res.status(400).json({ ok: false, error: "image file required." });
 
-  const quality_status = req.file.buffer.length < 500 ? "blur" : "pass";
+  const lookup = await store.lookupBand(wristband_qr);
+  if (!lookup.ok) return res.status(lookup.status || 404).json(lookup);
+
+  let analysis;
+  try {
+    analysis = await analyzeBadgeImage(req.file.buffer, req.file.originalname || "scan.jpg");
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: "Image analysis failed." });
+  }
+
+  const isPass = analysis.quality.pass;
   const result = await store.insertScan({
     wristband_qr,
     imageBuffer: req.file.buffer,
     mime: req.file.mimetype || "image/jpeg",
     filename: req.file.originalname || "scan.jpg",
-    quality_status,
+    quality_status: isPass ? "pass" : (analysis.quality.fail_reason?.includes("glare") ? "glare" : "blur"),
+    dose_ppm_h: analysis.dose?.dose_ppm_h ?? null,
+    confidence: analysis.dose?.confidence ?? null,
+    risk_band: analysis.risk_band ?? null,
     kiosk_id: req.body?.kiosk_id || "KIOSK-MUSTER-01",
   });
 
-  if (!result.ok) {
-    if (result.code === "QUALITY_FAIL" || result.status === 422) {
-      return res.status(422).json({ ok: false, code: "QUALITY_FAIL", error: result.error, prompt: "Re-scan" });
-    }
-    return res.status(result.status || 500).json(result);
+  if (!isPass) {
+    return res.status(422).json({ ok: false, code: "QUALITY_FAIL", error: analysis.quality.fail_reason, prompt: "Re-scan" });
   }
+  if (!result.ok) return res.status(result.status || 500).json(result);
+
   return res.json({
     ok: true,
     scan: result.scan,
-    worker: result.worker,
-    dose: { dose_ppm_h: result.scan?.dose_ppm_h ?? null, confidence: result.scan?.confidence ?? null },
-    risk_band: result.scan?.risk_band ?? null,
-    dummy: result.dummy || false,
+    worker: result.worker || lookup.worker,
+    dose: { dose_ppm_h: result.scan?.dose_ppm_h, confidence: result.scan?.confidence, engine: analysis.dose?.engine },
+    risk_band: result.scan?.risk_band,
   });
 });
 

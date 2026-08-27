@@ -1,4 +1,4 @@
-import { USED_MSG, mockDose } from "../lib/doseStub.js";
+import { USED_MSG } from "../lib/doseStub.js";
 
 function nowIso() {
   return new Date().toISOString();
@@ -124,31 +124,36 @@ export const memoryStore = {
     return { ok: true, wristband: wb, binding, worker: worker(binding.worker_id) };
   },
 
-  async insertScan({ wristband_qr, imageBuffer, mime, filename, image_url, quality_status, kiosk_id }) {
+  async insertScan({ wristband_qr, imageBuffer, mime, filename, image_url, quality_status, dose_ppm_h, confidence, risk_band, kiosk_id }) {
     const looked = await this.lookupBand(wristband_qr);
     if (!looked.ok) return looked;
-    if (quality_status && quality_status !== "pass") {
-      return {
-        ok: false,
-        status: 422,
-        code: "QUALITY_FAIL",
-        error: "Image unclear — please re-scan",
-        quality_status,
-      };
-    }
-    const dummy = mockDose(wristband_qr);
+
+    const isPass = !quality_status || quality_status === "pass";
     const row = {
       id: uid(),
       wristband_qr,
       worker_id: looked.worker.worker_id,
       timestamp: nowIso(),
       image_url: image_url || (imageBuffer ? `[memory:${filename || "scan.jpg"}]` : null),
-      quality_status: "pass",
+      quality_status: isPass ? "pass" : quality_status,
       kiosk_location: kiosk_id || "KIOSK-MUSTER-01",
-      ...dummy,
+      dose_ppm_h: isPass ? (dose_ppm_h ?? null) : null,
+      confidence: isPass ? (confidence ?? null) : null,
+      risk_band: isPass ? (risk_band ?? null) : null,
     };
     db.scans.unshift(row);
-    return { ok: true, scan: row, worker: looked.worker, dummy: true };
+
+    if (!isPass) {
+      return {
+        ok: false,
+        status: 422,
+        code: "QUALITY_FAIL",
+        error: `Image unclear — please re-scan (${quality_status})`,
+        quality_status,
+        scan: row,
+      };
+    }
+    return { ok: true, scan: row, worker: looked.worker };
   },
 
   async insertAmbientReading({ worker_id: wid, kiosk_location, ambient_h2s_ppm, temperature_c, humidity_percent }) {
