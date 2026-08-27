@@ -1,0 +1,8 @@
+{
+  "name": "h2s-dosai-ml",
+  "private": true,
+  "scripts": {
+    "dev": "python service.py",
+    "train": "python train_synthetic.py"
+  }
+}

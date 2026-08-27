@@ -1,0 +1,25 @@
+{
+  "feature_names": [
+    "L",
+    "a",
+    "b",
+    "darkness",
+    "rel_dark",
+    "patch_r",
+    "patch_g",
+    "patch_b"
+  ],
+  "mae": 0.1813,
+  "rmse": 0.2444,
+  "note": "Synthetic colorimetric mapping for SIH demo \u2014 replace with lab-calibrated pairs later.",
+  "importance": {
+    "L": 0.381325364112854,
+    "a": 3.746094080270268e-05,
+    "b": 5.9779620642075315e-05,
+    "darkness": 0.0016238153912127018,
+    "rel_dark": 0.6084218621253967,
+    "patch_r": 0.0007044480880722404,
+    "patch_g": 0.0009348852327093482,
+    "patch_b": 0.006892412435263395
+  }
+}
