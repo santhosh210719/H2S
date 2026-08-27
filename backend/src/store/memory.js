@@ -8,17 +8,34 @@ function uid() {
 }
 
 function seed() {
+  const demoWorkers = Array.from({ length: 50 }, (_, index) => {
+    const number = index + 1;
+    return {
+      worker_id: `WKR-${String(1000 + number).padStart(4, "0")}`,
+      name: `Demo Worker ${String(number).padStart(2, "0")}`,
+      department: ["CDU", "SRU", "Utilities", "Tank Farm"][index % 4],
+      shift: index % 2 === 0 ? "A" : "B",
+      created_at: nowIso(),
+    };
+  });
+
+  const demoWristbands = Array.from({ length: 51 }, (_, index) => 481 + index)
+    .filter((number) => number !== 499)
+    .map((number) => ({
+    wristband_qr: `WB-2026-${String(number).padStart(6, "0")}`,
+    batch_id: "BATCH-26-01",
+    status: "available",
+  }));
+
   return {
     workers: [
-      { worker_id: "WKR-1001", name: "Arun Kumar", department: "CDU", shift: "A", created_at: nowIso() },
-      { worker_id: "WKR-1002", name: "Priya Nair", department: "SRU", shift: "A", created_at: nowIso() },
-      { worker_id: "WKR-1003", name: "Rahul Shetty", department: "Utilities", shift: "B", created_at: nowIso() },
+      { ...demoWorkers[0], name: "Arun Kumar" },
+      { ...demoWorkers[1], name: "Priya Nair" },
+      { ...demoWorkers[2], name: "Rahul Shetty" },
+      ...demoWorkers.slice(3),
     ],
     wristbands: [
-      { wristband_qr: "WB-2026-000481", batch_id: "BATCH-26-01", status: "available" },
-      { wristband_qr: "WB-2026-000482", batch_id: "BATCH-26-01", status: "available" },
-      { wristband_qr: "WB-2026-000483", batch_id: "BATCH-26-01", status: "available" },
-      { wristband_qr: "WB-2026-000484", batch_id: "BATCH-26-01", status: "available" },
+      ...demoWristbands,
       { wristband_qr: "WB-2026-000499", batch_id: "BATCH-25-12", status: "used" },
     ],
     bindings: [],

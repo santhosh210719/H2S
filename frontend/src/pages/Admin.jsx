@@ -43,7 +43,7 @@ function LoginScreen({ onLogin }) {
     e.preventDefault();
     setErr("");
     if (!supabase) {
-      onLogin({ user: { email: "demo@mrpl.co.in" } });
+      onLogin({ user: { email: email.trim() || "demo@mrpl.co.in" } });
       return;
     }
     setBusy(true);

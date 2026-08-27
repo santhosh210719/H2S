@@ -14,12 +14,12 @@
   --danger:    #d4523e;
   --ok:        #3dba7a;
 
-  /* Risk band colours */
-  --fresh:     #f4efe6;
-  --low:       #e6d3b0;
-  --medium:    #c9a227;
-  --high:      #6b7a32;
-  --very-high: #1a1612;
+  /* Risk band colours — official H2S-DOSAI reference chart */
+  --fresh:     #F0E9E2;   /* off-white / cream  */
+  --low:       #DCC08A;   /* pale tan           */
+  --medium:    #B8902F;   /* gold / amber       */
+  --high:      #5C4A1E;   /* olive / dark brown */
+  --very-high: #231A24;   /* near-black         */
 
   /* Typography */
   --font: "Inter", "Segoe UI", system-ui, sans-serif;
@@ -142,24 +142,24 @@ tr:last-child td { border-bottom: none; }
 
 /* Risk escalation row highlights */
 .clickable-row.row-high {
-  background: rgba(107, 122, 50, 0.15);
+  background: rgba(92, 74, 30, 0.18);   /* --high #5C4A1E */
   border-left: 3px solid var(--high);
 }
 .clickable-row.row-high:hover {
-  background: rgba(107, 122, 50, 0.25);
+  background: rgba(92, 74, 30, 0.30);
 }
 .clickable-row.row-very-high {
-  background: rgba(212, 82, 62, 0.2);
-  border-left: 4px solid var(--danger);
+  background: rgba(35, 26, 36, 0.55);   /* --very-high #231A24 */
+  border-left: 4px solid var(--very-high);
   animation: pulseRow 2s ease-in-out infinite;
 }
 .clickable-row.row-very-high:hover {
-  background: rgba(212, 82, 62, 0.3);
+  background: rgba(35, 26, 36, 0.75);
 }
 
 @keyframes pulseRow {
-  0%, 100% { background: rgba(212, 82, 62, 0.15); }
-  50% { background: rgba(212, 82, 62, 0.3); }
+  0%, 100% { background: rgba(35, 26, 36, 0.45); }
+  50%       { background: rgba(35, 26, 36, 0.70); }
 }
 
 .escalation-badge {
@@ -193,11 +193,12 @@ tr:last-child td { border-bottom: none; }
   letter-spacing: 0.04em;
   color: #111;
 }
-.pill.fresh    { background: var(--fresh); }
-.pill.low      { background: var(--low); }
-.pill.medium   { background: var(--medium); }
-.pill.high     { background: var(--high); color: #eee; }
-.pill.very_high { background: var(--very-high); color: #ccc; border: 1px solid #3a3028; }
+/* Fresh & Low: dark text (light bg).  Medium/High/Very High: white text (dark bg). */
+.pill.fresh    { background: var(--fresh);     color: #1a1612; }
+.pill.low      { background: var(--low);       color: #1a1612; }
+.pill.medium   { background: var(--medium);    color: #fff; }
+.pill.high     { background: var(--high);      color: #f0e9e2; }
+.pill.very_high { background: var(--very-high); color: #DCC08A; border: 1px solid #5C4A1E; }
 
 /* ── Status text ────────────────────────────────────────────────────────────── */
 .muted { color: var(--muted); }

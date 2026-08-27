@@ -3,6 +3,10 @@ import { CameraCapture, QrScanner, makeSyntheticBadge } from "../lib/camera.jsx"
 import { apiUrl } from "../lib/supabase.js";
 
 const KIOSK_ID = "KIOSK-MUSTER-01";
+const DEMO_WORKER_CODES = Array.from({ length: 50 }, (_, index) => `WKR-${String(1001 + index).padStart(4, "0")}`);
+const DEMO_WRISTBAND_CODES = Array.from({ length: 51 }, (_, index) => 481 + index)
+  .filter((number) => number !== 499)
+  .map((number) => `WB-2026-${String(number).padStart(6, "0")}`);
 
 async function postJson(path, body) {
   const res = await fetch(apiUrl(path), {
@@ -25,6 +29,10 @@ function RiskPill({ band }) {
   return <span className={`pill ${band}`}>{labels[band] || band}</span>;
 }
 
+function normalizeWorkerCode(value) {
+  return String(value).trim().replace(/^WRK-/i, "WKR-");
+}
+
 // ── Screen A: Scan Worker ID ──────────────────────────────────────────────────
 function ScreenA({ onWorker }) {
   const [typed, setTyped] = useState("");
@@ -32,7 +40,7 @@ function ScreenA({ onWorker }) {
   const [err, setErr] = useState("");
 
   function submit(val) {
-    const v = String(val).trim();
+    const v = normalizeWorkerCode(val);
     if (!v) return;
     setErr("");
     onWorker(v);
@@ -67,7 +75,7 @@ function ScreenA({ onWorker }) {
       {scanning && (
         <QrScanner
           active
-          demoCodes={["WKR-1001", "WKR-1002", "WKR-1003"]}
+          demoCodes={DEMO_WORKER_CODES}
           onDecode={(text) => {
             setScanning(false);
             submit(text);
@@ -78,7 +86,7 @@ function ScreenA({ onWorker }) {
 
       <div className="seed-hint card" style={{ marginTop: 24 }}>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          <strong>Demo IDs:</strong> WKR-1001 (Arun Kumar) · WKR-1002 (Priya Nair) · WKR-1003 (Rahul Shetty)
+          <strong>Demo IDs:</strong> 50 worker IDs available: WKR-1001 through WKR-1050
         </p>
       </div>
     </div>
@@ -146,7 +154,7 @@ function ScreenB({ workerCode, onBound, onBack }) {
       {scanning && (
         <QrScanner
           active
-          demoCodes={["WB-2026-000481", "WB-2026-000482", "WB-2026-000483", "WB-2026-000484"]}
+          demoCodes={DEMO_WRISTBAND_CODES}
           onDecode={(text) => {
             setScanning(false);
             bind(text);
@@ -157,7 +165,7 @@ function ScreenB({ workerCode, onBound, onBack }) {
 
       <div className="seed-hint card" style={{ marginTop: 24 }}>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          <strong>Available bands:</strong> WB-2026-000481 · 000482 · 000483 · 000484
+          <strong>Available bands:</strong> 50 demo bands: WB-2026-000481 through WB-2026-000531 (except 000499)
           <br />
           <strong>Rejected demo:</strong> WB-2026-000499 (already used)
         </p>
@@ -282,15 +290,17 @@ function ScreenD({ result, workerName, bandQr, onScanAgain, onCloseShift }) {
     }
   }
 
+  // Official H2S-DOSAI reference chart colour mapping
   const bandColors = {
-    fresh: "#f4efe6",
-    low: "#e6d3b0",
-    medium: "#c9a227",
-    high: "#6b7a32",
-    very_high: "#1a1612",
+    fresh:     "#F0E9E2",  // off-white / cream
+    low:       "#DCC08A",  // pale tan
+    medium:    "#B8902F",  // gold / amber
+    high:      "#5C4A1E",  // olive / dark brown
+    very_high: "#231A24",  // near-black
   };
   const bgColor = band ? bandColors[band] || "var(--panel)" : "var(--panel)";
-  const isLight = band === "fresh" || band === "low" || band === "medium";
+  // Fresh & Low are light backgrounds → dark text; Medium/High/Very High are dark → white text
+  const isLight = band === "fresh" || band === "low";
 
   return (
     <div className="kiosk-screen">
