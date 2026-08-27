@@ -140,6 +140,49 @@ tr:last-child td { border-bottom: none; }
 .clickable-row { cursor: pointer; transition: background 0.12s; }
 .clickable-row:hover { background: var(--panel-2); }
 
+/* Risk escalation row highlights */
+.clickable-row.row-high {
+  background: rgba(107, 122, 50, 0.15);
+  border-left: 3px solid var(--high);
+}
+.clickable-row.row-high:hover {
+  background: rgba(107, 122, 50, 0.25);
+}
+.clickable-row.row-very-high {
+  background: rgba(212, 82, 62, 0.2);
+  border-left: 4px solid var(--danger);
+  animation: pulseRow 2s ease-in-out infinite;
+}
+.clickable-row.row-very-high:hover {
+  background: rgba(212, 82, 62, 0.3);
+}
+
+@keyframes pulseRow {
+  0%, 100% { background: rgba(212, 82, 62, 0.15); }
+  50% { background: rgba(212, 82, 62, 0.3); }
+}
+
+.escalation-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.escalation-badge.warn {
+  background: rgba(201, 162, 39, 0.25);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.escalation-badge.danger {
+  background: rgba(212, 82, 62, 0.3);
+  color: #ff9988;
+  border: 1px solid var(--danger);
+}
+
+
 /* ── Risk band pills ────────────────────────────────────────────────────────── */
 .pill {
   display: inline-block;

@@ -333,16 +333,24 @@ function Dashboard({ session, onLogout }) {
             )}
             {workers.map((w) => {
               const s = w.latest_scan;
+              const isHigh = s?.risk_band === "high";
+              const isVeryHigh = s?.risk_band === "very_high";
+              const rowClass = `clickable-row ${isVeryHigh ? "row-very-high" : isHigh ? "row-high" : ""}`;
+
               return (
                 <tr
                   key={w.worker_id}
-                  className="clickable-row"
+                  className={rowClass}
                   onClick={() => setSelectedWorker(w)}
                   title="Click for full history"
                 >
                   <td>
                     <strong>{w.name}</strong>
-                    <div className="muted" style={{ fontSize: 12 }}>{w.worker_id}</div>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {w.worker_id}
+                      {isVeryHigh && <span className="escalation-badge danger">⚠ CRITICAL ESCALATION</span>}
+                      {isHigh && <span className="escalation-badge warn">⚠ HIGH RISK</span>}
+                    </div>
                   </td>
                   <td>{w.department || "—"}</td>
                   <td>{w.shift || "—"}</td>
