@@ -109,6 +109,37 @@ app.post("/api/scan", upload.single("image"), async (req, res) => {
 });
 
 /**
+ * POST /api/ambient
+ * Ingest IoT telemetry reading from ESP32 / simulator (MQ-136 + DHT-11)
+ */
+app.post("/api/ambient", async (req, res) => {
+  const { kiosk_location, ambient_h2s_ppm, temperature_c, humidity_percent, worker_id } = req.body || {};
+  try {
+    const row = await store.insertAmbientReading({
+      kiosk_location: kiosk_location || "KIOSK-MUSTER-01",
+      ambient_h2s_ppm: Number(ambient_h2s_ppm || 0),
+      temperature_c: Number(temperature_c || 28),
+      humidity_percent: Number(humidity_percent || 65),
+      worker_id: worker_id || null,
+    });
+    return res.json({ ok: true, reading: row });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/ambient/latest
+ * Return recent ambient readings for real-time dashboard graphs
+ */
+app.get("/api/ambient/latest", async (req, res) => {
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit || 30)));
+  const result = await store.getLatestAmbient(limit);
+  return res.json(result);
+});
+
+
+/**
  * GET /api/workers
  * Returns all workers with their latest scan_logs entry.
  */

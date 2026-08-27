@@ -150,10 +150,23 @@ export const supabaseStore = {
   async insertAmbientReading({ worker_id, kiosk_location, ambient_h2s_ppm, temperature_c, humidity_percent }) {
     const { data, error } = await supabaseAdmin
       .from("live_ambient_readings")
-      .insert({ worker_id, kiosk_location, ambient_h2s_ppm, temperature_c, humidity_percent })
+      .insert({ worker_id: worker_id || null, kiosk_location: kiosk_location || "KIOSK-MUSTER-01", ambient_h2s_ppm: Number(ambient_h2s_ppm), temperature_c: Number(temperature_c), humidity_percent: Number(humidity_percent) })
       .select("*")
       .single();
     if (error) throw error;
     return data;
   },
+
+  async getLatestAmbient(limit = 30) {
+    const { data, error } = await supabaseAdmin
+      .from("live_ambient_readings")
+      .select("*")
+      .order("timestamp", { ascending: false })
+      .limit(limit);
+    if (error) return { ok: false, error: error.message, recent: [], latest: null };
+    const recent = (data || []).reverse();
+    const latest = recent.length ? recent[recent.length - 1] : null;
+    return { ok: true, latest, recent };
+  },
 };
+

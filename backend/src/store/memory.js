@@ -159,16 +159,25 @@ export const memoryStore = {
   async insertAmbientReading({ worker_id: wid, kiosk_location, ambient_h2s_ppm, temperature_c, humidity_percent }) {
     const row = {
       id: uid(),
-      worker_id: wid,
+      worker_id: wid || null,
       kiosk_location: kiosk_location || "KIOSK-MUSTER-01",
-      ambient_h2s_ppm,
-      temperature_c,
-      humidity_percent,
+      ambient_h2s_ppm: Number(ambient_h2s_ppm || 0),
+      temperature_c: Number(temperature_c || 28),
+      humidity_percent: Number(humidity_percent || 65),
       timestamp: nowIso(),
     };
     db.ambient.push(row);
+    if (db.ambient.length > 500) db.ambient.shift();
     return row;
   },
+
+  async getLatestAmbient(limit = 30) {
+    const sorted = [...db.ambient].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    const recent = sorted.slice(-limit);
+    const latest = recent.length ? recent[recent.length - 1] : null;
+    return { ok: true, latest, recent };
+  },
+
 
   async listWorkers() {
     return db.workers.map((w) => {
