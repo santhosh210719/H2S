@@ -51,9 +51,10 @@ def run_simulator(interval: float = 3.0, iterations: int | None = None):
         # 5% chance of a localized spike (e.g. ambient process leak)
         if random.random() < 0.05:
             h2s_val = round(random.uniform(4.5, 12.0), 2)
-            print(f"[SensorSimulator] ⚠️ Simulated ambient H2S spike: {h2s_val} ppm")
+            print(f"[SensorSimulator] [SPIKE] Simulated ambient H2S spike: {h2s_val} ppm")
         else:
             h2s_val = round(base_h2s, 2)
+
 
         ok = send_reading(h2s_val, temp, hum)
         count += 1
