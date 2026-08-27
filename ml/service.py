@@ -69,34 +69,81 @@ def quality_gate(bgr: np.ndarray) -> dict:
     }
 
 
+def detect_and_crop(bgr: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        c = max(contours, key=cv2.contourArea)
+        x, y, w, h = cv2.boundingRect(c)
+        if w > 80 and h > 50:
+            return bgr[y : y + h, x : x + w]
+    return bgr
+
+
+def normalize_lighting(bgr: np.ndarray) -> np.ndarray:
+    h, w = bgr.shape[:2]
+    ref_region = bgr[int(h * 0.04) : int(h * 0.28), int(w * 0.52) : int(w * 0.96)]
+    if ref_region.size > 0:
+        mean_bgr = ref_region.reshape(-1, 3).mean(axis=0)
+        scale = 245.0 / np.maximum(mean_bgr, 1.0)
+        return np.clip(bgr.astype(np.float32) * scale, 0, 255).astype(np.uint8)
+    return bgr
+
+
 def features_from_bgr(bgr: np.ndarray) -> dict:
-    h, w, _ = bgr.shape
-    patch = bgr[int(h * 0.18) : int(h * 0.82), int(w * 0.08) : int(w * 0.52)]
-    ref = bgr[int(h * 0.08) : int(h * 0.22), int(w * 0.58) : int(w * 0.92)]
+    cropped = detect_and_crop(bgr)
+    norm = normalize_lighting(cropped)
+    h, w, _ = norm.shape
+
+    patch = norm[int(h * 0.18) : int(h * 0.82), int(w * 0.08) : int(w * 0.52)]
+    ref = norm[int(h * 0.08) : int(h * 0.22), int(w * 0.58) : int(w * 0.92)]
     if patch.size == 0:
-        patch = bgr
+        patch = norm
+
     mean_bgr = patch.reshape(-1, 3).mean(axis=0)
     b, g, r = mean_bgr
     lab = cv2.cvtColor(np.uint8([[mean_bgr]]), cv2.COLOR_BGR2LAB)[0, 0]
     L, a, bb = [float(x) for x in lab]
     L = L * (100 / 255)
+    a_val = float(a) - 128
+    b_val = float(bb) - 128
+
     darkness = 1.0 - (0.114 * b + 0.587 * g + 0.299 * r) / 255.0
+
     if ref.size:
         ref_lab = cv2.cvtColor(ref, cv2.COLOR_BGR2LAB).reshape(-1, 3).mean(axis=0)
         ref_L = float(ref_lab[0]) * (100 / 255) or 1.0
     else:
         ref_L = 90.0
+
     rel_dark = float(np.clip(1.0 - L / max(ref_L, 1.0), 0, 1))
+
+    # Delta E 1976 from fresh baseline (L=92, a=4, b=8)
+    delta_e = float(np.sqrt((L - 92.0) ** 2 + (a_val - 4.0) ** 2 + (b_val - 8.0) ** 2))
+
+    # HSV metrics
+    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+    hue_mean = float(hsv[:, :, 0].mean())
+    sat_mean = float(hsv[:, :, 1].mean())
+    grad_score = float(np.std(patch.astype(np.float32).mean(axis=2), axis=0).mean())
+
     return {
         "L": round(L, 3),
-        "a": round(float(a) - 128, 3),
-        "b": round(float(bb) - 128, 3),
+        "a": round(a_val, 3),
+        "b": round(b_val, 3),
         "darkness": round(float(darkness), 4),
         "rel_dark": round(rel_dark, 4),
         "patch_r": round(float(r), 2),
         "patch_g": round(float(g), 2),
         "patch_b": round(float(b), 2),
+        "delta_e": round(delta_e, 3),
+        "hue_mean": round(hue_mean, 2),
+        "sat_mean": round(sat_mean, 2),
+        "grad_score": round(grad_score, 3),
     }
+
 
 
 def predict_dose(feat: dict) -> dict:
