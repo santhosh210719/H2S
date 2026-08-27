@@ -1,7 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
-import { supabaseAdmin, STORAGE_BUCKET } from "../lib/supabase.js";
-import { analyzeBadgeImage } from "../lib/mlClient.js";
+import { store } from "../store/index.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -14,137 +13,102 @@ function fail(res, status, code, error) {
   return res.status(status).json({ ok: false, code, error });
 }
 
+/**
+ * POST /api/kiosk/bind
+ * Body: { worker_id, wristband_qr, kiosk_location? }
+ * Creates a shift_binding and marks wristband 'bound'.
+ */
 kioskRouter.post("/bind", async (req, res) => {
-  const { worker_code, wristband_qr, kiosk_id } = req.body || {};
-  if (!worker_code || !wristband_qr) {
+  const { worker_id, wristband_qr, kiosk_location, kiosk_id } = req.body || {};
+  if (!worker_id || !wristband_qr) {
     return fail(res, 400, "MISSING_QR", "Scan worker ID QR then wristband QR.");
   }
-  const { data, error } = await supabaseAdmin.rpc("bind_shift", {
-    p_worker_code: String(worker_code).trim(),
-    p_wristband_qr: String(wristband_qr).trim(),
-    p_kiosk_id: kiosk_id || "KIOSK-MUSTER-01",
+  const result = await store.bindWristband({
+    worker_id: String(worker_id).trim(),
+    wristband_qr: String(wristband_qr).trim(),
+    kiosk_location: kiosk_location || kiosk_id || "KIOSK-MUSTER-01",
   });
-  if (error) return fail(res, 500, "BIND_RPC", error.message);
-  if (!data?.ok) return fail(res, 409, data?.code || "BIND_REJECTED", data?.error || "Bind failed");
-  return res.json(data);
+  if (!result.ok) return fail(res, result.status || 409, "BIND_REJECTED", result.error);
+  return res.json(result);
 });
 
+/**
+ * POST /api/kiosk/close
+ * Body: { wristband_qr, kiosk_location? }
+ * Closes the shift: sets shift_end and marks wristband 'used'.
+ */
 kioskRouter.post("/close", async (req, res) => {
-  const { wristband_qr, kiosk_id } = req.body || {};
-  if (!wristband_qr) return fail(res, 400, "MISSING_QR", "Scan the wristband QR to close the shift.");
-  const { data, error } = await supabaseAdmin.rpc("close_shift_by_wristband", {
-    p_wristband_qr: String(wristband_qr).trim(),
-    p_kiosk_id: kiosk_id || "KIOSK-MUSTER-01",
+  const { wristband_qr, kiosk_location, kiosk_id } = req.body || {};
+  if (!wristband_qr) {
+    return fail(res, 400, "MISSING_QR", "Scan the wristband QR to close the shift.");
+  }
+  const result = await store.closeShift({
+    wristband_qr: String(wristband_qr).trim(),
+    kiosk_location: kiosk_location || kiosk_id || "KIOSK-MUSTER-01",
   });
-  if (error) return fail(res, 500, "CLOSE_RPC", error.message);
-  if (!data?.ok) return fail(res, 409, data?.code || "CLOSE_REJECTED", data?.error || "Close failed");
-  return res.json(data);
+  if (!result.ok) return fail(res, result.status || 409, "CLOSE_REJECTED", result.error);
+  return res.json(result);
 });
 
+/**
+ * POST /api/kiosk/lookup
+ * Body: { wristband_qr }
+ * Returns the worker bound to this wristband (must be 'bound' + active shift).
+ */
 kioskRouter.post("/lookup", async (req, res) => {
   const { wristband_qr } = req.body || {};
   if (!wristband_qr) return fail(res, 400, "MISSING_QR", "Wristband QR required.");
-  const qr = String(wristband_qr).trim();
-
-  const { data: band, error: bandErr } = await supabaseAdmin
-    .from("wristbands")
-    .select("*")
-    .eq("qr_code", qr)
-    .maybeSingle();
-  if (bandErr) return fail(res, 500, "LOOKUP", bandErr.message);
-  if (!band) return fail(res, 404, "WRISTBAND_NOT_FOUND", "Wristband QR not recognised.");
-  if (band.status === "used") {
-    return fail(res, 409, "WRISTBAND_USED", "This wristband has already been used — please use a new one.");
-  }
-  if (band.status !== "bound") {
-    return fail(res, 409, "NOT_BOUND", "Wristband is not bound. Start the shift first (worker ID + wristband QR).");
-  }
-
-  const { data: shift, error: shiftErr } = await supabaseAdmin
-    .from("shifts")
-    .select("*, workers(*)")
-    .eq("wristband_id", band.id)
-    .eq("status", "active")
-    .maybeSingle();
-  if (shiftErr) return fail(res, 500, "LOOKUP", shiftErr.message);
-  if (!shift) return fail(res, 409, "NO_ACTIVE_SHIFT", "No active shift for this wristband.");
-
-  return res.json({
-    ok: true,
-    wristband: { id: band.id, qr_code: band.qr_code, status: band.status },
-    shift: { id: shift.id, kiosk_id: shift.kiosk_id, started_at: shift.started_at },
-    worker: shift.workers,
-  });
+  const result = await store.lookupBand(String(wristband_qr).trim());
+  if (!result.ok) return fail(res, result.status || 404, "LOOKUP_FAILED", result.error);
+  return res.json(result);
 });
 
+/**
+ * POST /api/kiosk/scan
+ * Multipart: image (file) + wristband_qr (field)
+ * Runs quality gate → stub dose → inserts scan_log row + uploads image.
+ */
 kioskRouter.post("/scan", upload.single("image"), async (req, res) => {
   const wristband_qr = String(req.body?.wristband_qr || "").trim();
   const kiosk_id = req.body?.kiosk_id || "KIOSK-MUSTER-01";
   if (!wristband_qr) return fail(res, 400, "MISSING_QR", "Scan the wristband QR first.");
   if (!req.file?.buffer) return fail(res, 400, "MISSING_IMAGE", "Capture a wristband photo.");
 
-  const { data: band } = await supabaseAdmin.from("wristbands").select("*").eq("qr_code", wristband_qr).maybeSingle();
-  if (!band) return fail(res, 404, "WRISTBAND_NOT_FOUND", "Wristband QR not recognised.");
-  if (band.status === "used") {
-    return fail(res, 409, "WRISTBAND_USED", "This wristband has already been used — please use a new one.");
-  }
+  // Phase 1: quality_status stub — always passes unless file is very tiny
+  const quality_status = req.file.buffer.length < 500 ? "blur" : "pass";
 
-  const { data: shift } = await supabaseAdmin
-    .from("shifts")
-    .select("*, workers(*)")
-    .eq("wristband_id", band.id)
-    .eq("status", "active")
-    .maybeSingle();
-  if (!shift) {
-    return fail(res, 409, "NO_ACTIVE_SHIFT", "Bind worker ID + wristband QR at shift start before scanning.");
-  }
-
-  const analysis = await analyzeBadgeImage(req.file.buffer, req.file.originalname || "scan.jpg");
-
-  if (!analysis.quality.pass) {
-    return res.status(422).json({
-      ok: false,
-      code: "QUALITY_FAIL",
-      error: analysis.quality.fail_reason || "Re-scan required.",
-      quality: analysis.quality,
-      prompt: "Re-scan",
-    });
-  }
-
-  const objectPath = `${shift.id}/${Date.now()}-${(req.file.originalname || "scan.jpg").replace(/[^\w.-]/g, "_")}`;
-  let image_path = null;
-  const { error: upErr } = await supabaseAdmin.storage.from(STORAGE_BUCKET).upload(objectPath, req.file.buffer, {
-    contentType: req.file.mimetype || "image/jpeg",
-    upsert: false,
-  });
-  if (!upErr) image_path = objectPath;
-
-  const row = {
-    shift_id: shift.id,
-    worker_id: shift.worker_id,
-    wristband_id: band.id,
+  const result = await store.insertScan({
+    wristband_qr,
+    imageBuffer: req.file.buffer,
+    mime: req.file.mimetype || "image/jpeg",
+    filename: req.file.originalname || "scan.jpg",
+    quality_status,
     kiosk_id,
-    image_path,
-    quality_pass: true,
-    quality_fail_reason: null,
-    blur_score: analysis.quality.blur_score,
-    glare_ratio: analysis.quality.glare_ratio,
-    dose_ppm_h: analysis.dose.dose_ppm_h,
-    confidence: analysis.dose.confidence,
-    risk_band: analysis.risk_band,
-    color_features: analysis.features,
-  };
+  });
 
-  const { data: scan, error: insErr } = await supabaseAdmin.from("scans").insert(row).select("*").single();
-  if (insErr) return fail(res, 500, "SCAN_INSERT", insErr.message);
+  if (!result.ok) {
+    const httpStatus = result.status || 500;
+    if (result.code === "QUALITY_FAIL" || httpStatus === 422) {
+      return res.status(422).json({
+        ok: false,
+        code: "QUALITY_FAIL",
+        error: result.error || "Image unclear — please re-scan",
+        prompt: "Re-scan",
+      });
+    }
+    return fail(res, httpStatus, result.code || "SCAN_ERROR", result.error);
+  }
 
   return res.json({
     ok: true,
-    scan,
-    worker: shift.workers,
-    wristband: { qr_code: band.qr_code },
-    quality: analysis.quality,
-    dose: analysis.dose,
-    risk_band: analysis.risk_band,
+    scan: result.scan,
+    worker: result.worker,
+    dose: {
+      dose_ppm_h: result.scan?.dose_ppm_h ?? null,
+      confidence: result.scan?.confidence ?? null,
+    },
+    risk_band: result.scan?.risk_band ?? null,
+    quality_status: "pass",
+    dummy: result.dummy || false,
   });
 });

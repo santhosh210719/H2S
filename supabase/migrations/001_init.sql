@@ -1,268 +1,117 @@
--- H2S-DOSAI schema (SIH 26118)
--- Wristband QR is factory-issued and ONE-TIME-USE after shift close-out.
--- Scanning is kiosk-only (Express uses service_role). Admins read via Auth + RLS.
+-- H2S-DOSAI Phase 1 schema (SIH 26118)
+-- Kiosk writes go through Express (service_role). Admins read via Auth + RLS.
 
 create extension if not exists pgcrypto;
 
 do $$ begin
-  create type wristband_status as enum ('unused', 'bound', 'used');
+  create type wristband_status as enum ('available', 'bound', 'used');
 exception when duplicate_object then null;
 end $$;
 
 do $$ begin
-  create type shift_status as enum ('active', 'closed');
-exception when duplicate_object then null;
-end $$;
-
-do $$ begin
-  create type risk_band as enum ('fresh', 'low', 'medium', 'high', 'very_high');
+  create type quality_status as enum ('pass', 'blur', 'glare');
 exception when duplicate_object then null;
 end $$;
 
 create table if not exists public.workers (
-  id uuid primary key default gen_random_uuid(),
-  worker_code text not null unique,
-  full_name text not null,
+  worker_id text primary key,
+  name text not null,
   department text,
+  shift text,
   created_at timestamptz not null default now()
 );
 
 create table if not exists public.wristbands (
-  id uuid primary key default gen_random_uuid(),
-  qr_code text not null unique,
-  status wristband_status not null default 'unused',
-  used_at timestamptz,
+  wristband_qr text primary key,
+  batch_id text,
+  manufactured_date date,
+  status wristband_status not null default 'available',
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.shifts (
+create table if not exists public.shift_bindings (
   id uuid primary key default gen_random_uuid(),
-  worker_id uuid not null references public.workers (id),
-  wristband_id uuid not null references public.wristbands (id),
-  kiosk_id text not null default 'KIOSK-MUSTER-01',
-  status shift_status not null default 'active',
-  started_at timestamptz not null default now(),
-  ended_at timestamptz,
-  unique (wristband_id, started_at)
+  wristband_qr text not null references public.wristbands (wristband_qr),
+  worker_id text not null references public.workers (worker_id),
+  shift_start timestamptz not null default now(),
+  shift_end timestamptz,
+  kiosk_location text not null default 'KIOSK-MUSTER-01'
 );
 
-create unique index if not exists shifts_one_active_per_wristband
-  on public.shifts (wristband_id)
-  where status = 'active';
+create unique index if not exists shift_bindings_one_open_band
+  on public.shift_bindings (wristband_qr)
+  where shift_end is null;
 
-create unique index if not exists shifts_one_active_per_worker
-  on public.shifts (worker_id)
-  where status = 'active';
+create unique index if not exists shift_bindings_one_open_worker
+  on public.shift_bindings (worker_id)
+  where shift_end is null;
 
-create table if not exists public.scans (
+create table if not exists public.scan_logs (
   id uuid primary key default gen_random_uuid(),
-  shift_id uuid not null references public.shifts (id),
-  worker_id uuid not null references public.workers (id),
-  wristband_id uuid not null references public.wristbands (id),
-  kiosk_id text not null,
-  image_path text,
-  quality_pass boolean not null default false,
-  quality_fail_reason text,
-  blur_score double precision,
-  glare_ratio double precision,
+  wristband_qr text not null references public.wristbands (wristband_qr),
+  timestamp timestamptz not null default now(),
+  image_url text,
+  quality_status quality_status not null default 'pass',
   dose_ppm_h double precision,
   confidence double precision,
-  risk_band risk_band,
-  color_features jsonb,
-  created_at timestamptz not null default now()
+  risk_band text
 );
 
--- OPTIONAL / TIER-2: active wearable pack (MQ-136 + DHT-11). Supplementary live
--- ambient layer ONLY — does not replace the passive badge cumulative dose.
-create table if not exists public.sensor_readings (
+create table if not exists public.live_ambient_readings (
   id uuid primary key default gen_random_uuid(),
-  worker_id uuid references public.workers (id),
-  device_id text not null,
-  h2s_ppm double precision,
+  worker_id text references public.workers (worker_id),
+  kiosk_location text,
+  ambient_h2s_ppm double precision,
   temperature_c double precision,
-  humidity_pct double precision,
-  created_at timestamptz not null default now()
+  humidity_percent double precision,
+  timestamp timestamptz not null default now()
 );
 
-create index if not exists scans_created_at_idx on public.scans (created_at desc);
-create index if not exists sensor_readings_created_at_idx on public.sensor_readings (created_at desc);
+create index if not exists scan_logs_ts_idx on public.scan_logs (timestamp desc);
+create index if not exists ambient_ts_idx on public.live_ambient_readings (timestamp desc);
 
 alter table public.workers enable row level security;
 alter table public.wristbands enable row level security;
-alter table public.shifts enable row level security;
-alter table public.scans enable row level security;
-alter table public.sensor_readings enable row level security;
+alter table public.shift_bindings enable row level security;
+alter table public.scan_logs enable row level security;
+alter table public.live_ambient_readings enable row level security;
 
--- Kiosk traffic goes through Express (service_role bypasses RLS).
--- Dashboard: any authenticated admin can read; close-shift goes through API.
+-- Admin (authenticated) can read everything.
+drop policy if exists workers_admin_read on public.workers;
+create policy workers_admin_read on public.workers for select to authenticated using (true);
 
-drop policy if exists workers_select_auth on public.workers;
-create policy workers_select_auth on public.workers
-  for select to authenticated using (true);
+drop policy if exists wristbands_admin_read on public.wristbands;
+create policy wristbands_admin_read on public.wristbands for select to authenticated using (true);
 
-drop policy if exists wristbands_select_auth on public.wristbands;
-create policy wristbands_select_auth on public.wristbands
-  for select to authenticated using (true);
+drop policy if exists bindings_admin_read on public.shift_bindings;
+create policy bindings_admin_read on public.shift_bindings for select to authenticated using (true);
 
-drop policy if exists shifts_select_auth on public.shifts;
-create policy shifts_select_auth on public.shifts
-  for select to authenticated using (true);
+drop policy if exists scans_admin_read on public.scan_logs;
+create policy scans_admin_read on public.scan_logs for select to authenticated using (true);
 
-drop policy if exists scans_select_auth on public.scans;
-create policy scans_select_auth on public.scans
-  for select to authenticated using (true);
+drop policy if exists ambient_admin_read on public.live_ambient_readings;
+create policy ambient_admin_read on public.live_ambient_readings for select to authenticated using (true);
 
-drop policy if exists sensor_select_auth on public.sensor_readings;
-create policy sensor_select_auth on public.sensor_readings
-  for select to authenticated using (true);
+-- Direct anon kiosk is denied. Kiosk uses Express + service_role (bypasses RLS)
+-- for bind/scan/close. If a shared kiosk JWT is added later, grant only:
+--   select on workers, wristbands, shift_bindings
+--   insert on scan_logs
+-- Do not grant wristband status updates to anon.
 
--- Atomic bind: unused wristband + known worker -> active shift.
-create or replace function public.bind_shift(
-  p_worker_code text,
-  p_wristband_qr text,
-  p_kiosk_id text
-) returns jsonb
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_worker public.workers%rowtype;
-  v_band public.wristbands%rowtype;
-  v_shift public.shifts%rowtype;
-begin
-  select * into v_worker from public.workers where worker_code = p_worker_code;
-  if not found then
-    return jsonb_build_object('ok', false, 'code', 'WORKER_NOT_FOUND',
-      'error', 'Worker ID QR not recognised.');
-  end if;
+alter table public.scan_logs replica identity full;
+alter table public.shift_bindings replica identity full;
+alter table public.live_ambient_readings replica identity full;
 
-  select * into v_band from public.wristbands where qr_code = p_wristband_qr for update;
-  if not found then
-    return jsonb_build_object('ok', false, 'code', 'WRISTBAND_NOT_FOUND',
-      'error', 'Wristband QR not recognised.');
-  end if;
+insert into public.workers (worker_id, name, department, shift) values
+  ('WKR-1001', 'Arun Kumar', 'CDU', 'A'),
+  ('WKR-1002', 'Priya Nair', 'SRU', 'A'),
+  ('WKR-1003', 'Rahul Shetty', 'Utilities', 'B')
+on conflict (worker_id) do nothing;
 
-  if v_band.status = 'used' then
-    return jsonb_build_object('ok', false, 'code', 'WRISTBAND_USED',
-      'error', 'This wristband has already been used — please use a new one.');
-  end if;
-
-  if v_band.status = 'bound' then
-    return jsonb_build_object('ok', false, 'code', 'WRISTBAND_BOUND',
-      'error', 'This wristband is already bound to an active shift.');
-  end if;
-
-  if exists (select 1 from public.shifts where worker_id = v_worker.id and status = 'active') then
-    return jsonb_build_object('ok', false, 'code', 'WORKER_ACTIVE_SHIFT',
-      'error', 'This worker already has an active shift. Close it before binding a new badge.');
-  end if;
-
-  insert into public.shifts (worker_id, wristband_id, kiosk_id, status)
-  values (v_worker.id, v_band.id, coalesce(p_kiosk_id, 'KIOSK-MUSTER-01'), 'active')
-  returning * into v_shift;
-
-  update public.wristbands set status = 'bound' where id = v_band.id;
-
-  return jsonb_build_object(
-    'ok', true,
-    'shift', jsonb_build_object(
-      'id', v_shift.id,
-      'kiosk_id', v_shift.kiosk_id,
-      'started_at', v_shift.started_at,
-      'status', v_shift.status
-    ),
-    'worker', jsonb_build_object(
-      'id', v_worker.id,
-      'worker_code', v_worker.worker_code,
-      'full_name', v_worker.full_name,
-      'department', v_worker.department
-    ),
-    'wristband', jsonb_build_object(
-      'id', v_band.id,
-      'qr_code', v_band.qr_code,
-      'status', 'bound'
-    )
-  );
-end;
-$$;
-
-create or replace function public.close_shift_by_wristband(
-  p_wristband_qr text,
-  p_kiosk_id text
-) returns jsonb
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_band public.wristbands%rowtype;
-  v_shift public.shifts%rowtype;
-  v_worker public.workers%rowtype;
-begin
-  select * into v_band from public.wristbands where qr_code = p_wristband_qr for update;
-  if not found then
-    return jsonb_build_object('ok', false, 'code', 'WRISTBAND_NOT_FOUND',
-      'error', 'Wristband QR not recognised.');
-  end if;
-
-  if v_band.status = 'used' then
-    return jsonb_build_object('ok', false, 'code', 'WRISTBAND_USED',
-      'error', 'This wristband has already been used — please use a new one.');
-  end if;
-
-  select * into v_shift
-  from public.shifts
-  where wristband_id = v_band.id and status = 'active'
-  for update;
-
-  if not found then
-    return jsonb_build_object('ok', false, 'code', 'NO_ACTIVE_SHIFT',
-      'error', 'No active shift for this wristband.');
-  end if;
-
-  select * into v_worker from public.workers where id = v_shift.worker_id;
-
-  update public.shifts
-    set status = 'closed', ended_at = now()
-    where id = v_shift.id;
-
-  update public.wristbands
-    set status = 'used', used_at = now()
-    where id = v_band.id;
-
-  return jsonb_build_object(
-    'ok', true,
-    'message', 'Shift closed. Wristband QR is permanently marked used.',
-    'worker', jsonb_build_object('worker_code', v_worker.worker_code, 'full_name', v_worker.full_name),
-    'wristband', jsonb_build_object('qr_code', v_band.qr_code, 'status', 'used')
-  );
-end;
-$$;
-
-revoke all on function public.bind_shift(text, text, text) from public, anon, authenticated;
-revoke all on function public.close_shift_by_wristband(text, text) from public, anon, authenticated;
-grant execute on function public.bind_shift(text, text, text) to service_role;
-grant execute on function public.close_shift_by_wristband(text, text) to service_role;
-
-insert into public.workers (worker_code, full_name, department) values
-  ('WKR-1001', 'Arun Kumar', 'CDU'),
-  ('WKR-1002', 'Priya Nair', 'SRU'),
-  ('WKR-1003', 'Rahul Shetty', 'Utilities')
-on conflict (worker_code) do nothing;
-
-insert into public.wristbands (qr_code, status) values
-  ('WB-2026-000481', 'unused'),
-  ('WB-2026-000482', 'unused'),
-  ('WB-2026-000483', 'unused'),
-  ('WB-2026-000484', 'unused'),
-  ('WB-2026-000499', 'used')
-on conflict (qr_code) do nothing;
-
-update public.wristbands
-  set used_at = now()
-  where qr_code = 'WB-2026-000499' and used_at is null;
-
-alter table public.scans replica identity full;
-alter table public.shifts replica identity full;
-alter table public.sensor_readings replica identity full;
+insert into public.wristbands (wristband_qr, batch_id, manufactured_date, status) values
+  ('WB-2026-000481', 'BATCH-26-01', '2026-06-01', 'available'),
+  ('WB-2026-000482', 'BATCH-26-01', '2026-06-01', 'available'),
+  ('WB-2026-000483', 'BATCH-26-01', '2026-06-01', 'available'),
+  ('WB-2026-000484', 'BATCH-26-01', '2026-06-01', 'available'),
+  ('WB-2026-000499', 'BATCH-25-12', '2025-12-15', 'used')
+on conflict (wristband_qr) do nothing;
