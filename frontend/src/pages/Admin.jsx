@@ -43,7 +43,6 @@ function LoginScreen({ onLogin }) {
     e.preventDefault();
     setErr("");
     if (!supabase) {
-      // Demo mode without Supabase — bypass login
       onLogin({ user: { email: "demo@mrpl.co.in" } });
       return;
     }
@@ -90,7 +89,7 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-// ── Worker History View ───────────────────────────────────────────────────────
+// ── Worker History View + TWA & CSV Export ─────────────────────────────────────
 function WorkerHistory({ worker, onBack }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -114,18 +113,69 @@ function WorkerHistory({ worker, onBack }) {
     idx: i,
   }));
 
+  // Calculate 8-hour Time-Weighted Average (TWA)
+  const latestScan = data?.scans?.length ? data.scans[data.scans.length - 1] : null;
+  const latestDose = latestScan?.dose_ppm_h || 0;
+  const twa8hr = Number((latestDose / 8.0).toFixed(2));
+  const twaStatus = twa8hr > 15 ? "exceeded" : twa8hr > 10 ? "warning" : "normal";
+
+  // CSV Report Generator
+  function downloadCsv() {
+    if (!data) return;
+    const headers = ["Scan ID,Timestamp,Worker ID,Worker Name,Wristband QR,Dose (ppm·h),Risk Band,Confidence,Quality Status\n"];
+    const rows = (data.scans || []).map((s) => [
+      s.id,
+      `"${s.timestamp}"`,
+      worker.worker_id,
+      `"${worker.name}"`,
+      s.wristband_qr,
+      s.dose_ppm_h ?? "",
+      s.risk_band ?? "",
+      s.confidence != null ? (s.confidence * 100).toFixed(1) + "%" : "",
+      s.quality_status || "",
+    ].join(","));
+
+    const csvContent = "data:text/csv;charset=utf-8," + headers.concat(rows).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `shift_report_${worker.worker_id}_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
   return (
     <div className="history-view">
-      <div className="history-nav">
-        <button className="btn ghost" onClick={onBack}>
-          ← Back to dashboard
+      <div className="history-nav" style={{ justifyContent: "space-between" }}>
+        <div className="row" style={{ alignItems: "center", gap: 12 }}>
+          <button className="btn ghost" onClick={onBack}>
+            ← Back to dashboard
+          </button>
+          <span className="muted" style={{ fontSize: 13 }}>
+            {worker.name} · {worker.worker_id} · {worker.department}
+          </span>
+        </div>
+        <button id="export-csv-btn" className="btn primary" onClick={downloadCsv} disabled={!data}>
+          📥 Export Shift Report (CSV)
         </button>
-        <span className="muted" style={{ fontSize: 13 }}>
-          {worker.name} · {worker.worker_id} · {worker.department}
-        </span>
       </div>
 
-      <h2 style={{ marginTop: 16 }}>Exposure History</h2>
+      <div className="row" style={{ marginTop: 16, alignItems: "center", justifyContent: "space-between" }}>
+        <h2>Exposure History & TWA Metrics</h2>
+        {/* TWA Metric Badge */}
+        <div className="card" style={{ padding: "8px 16px", display: "flex", gap: 12, alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 11, textTransform: "uppercase", color: "var(--muted)" }}>8-Hr TWA Exposure</div>
+            <div style={{ fontSize: "1.2rem", fontWeight: 800 }}>{twa8hr} <small style={{ fontSize: "0.65em" }}>ppm</small></div>
+          </div>
+          <div>
+            {twaStatus === "exceeded" && <span className="pill very_high">OSHA STEL EXCEEDED (&gt;15 ppm)</span>}
+            {twaStatus === "warning" && <span className="pill high">WARNING (&gt;10 ppm)</span>}
+            {twaStatus === "normal" && <span className="pill fresh">NORMAL (&lt;10 ppm)</span>}
+          </div>
+        </div>
+      </div>
 
       {loading && <p className="muted">Loading…</p>}
       {err && <p className="warn">{err}</p>}
@@ -240,6 +290,11 @@ function Dashboard({ session, onLogout }) {
   const [notice, setNotice] = useState("Loading…");
   const [selectedWorker, setSelectedWorker] = useState(null);
 
+  // Live Ambient Telemetry State
+  const [ambientReadings, setAmbientReadings] = useState([]);
+  const [latestAmbient, setLatestAmbient] = useState(null);
+  const [injectingGas, setInjectingGas] = useState(false);
+
   async function loadWorkers() {
     try {
       const res = await fetch(apiUrl("/api/workers"));
@@ -255,10 +310,47 @@ function Dashboard({ session, onLogout }) {
     }
   }
 
+  async function loadAmbient() {
+    try {
+      const res = await fetch(apiUrl("/api/ambient/latest?limit=30"));
+      const data = await res.json();
+      if (data.ok) {
+        setAmbientReadings(data.recent || []);
+        setLatestAmbient(data.latest || null);
+      }
+    } catch {
+      // silent ambient retry
+    }
+  }
+
+  // Trigger synthetic gas leak spike for live demo presentation
+  async function triggerGasSpike() {
+    setInjectingGas(true);
+    try {
+      await fetch(apiUrl("/api/ambient"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kiosk_location: "KIOSK-MUSTER-01",
+          ambient_h2s_ppm: 14.8,
+          temperature_c: 32.4,
+          humidity_percent: 71.0,
+        }),
+      });
+      await loadAmbient();
+    } finally {
+      setInjectingGas(false);
+    }
+  }
+
   useEffect(() => {
     loadWorkers();
+    loadAmbient();
 
-    if (!supabase) return;
+    // Ambient polling loop every 2.5 seconds
+    const interval = setInterval(loadAmbient, 2500);
+
+    if (!supabase) return () => clearInterval(interval);
 
     const channel = supabase
       .channel("admin-live")
@@ -267,12 +359,15 @@ function Dashboard({ session, onLogout }) {
         loadWorkers();
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "shift_bindings" }, () => loadWorkers())
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "live_ambient_readings" }, () =>
-        loadWorkers()
-      )
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "live_ambient_readings" }, () => {
+        loadAmbient();
+      })
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   if (selectedWorker) {
@@ -287,8 +382,31 @@ function Dashboard({ session, onLogout }) {
     );
   }
 
+  const isLeakAlert = latestAmbient && latestAmbient.ambient_h2s_ppm > 10.0;
+  const ambientH2s = latestAmbient ? latestAmbient.ambient_h2s_ppm : null;
+  const ambientTemp = latestAmbient ? latestAmbient.temperature_c : null;
+  const ambientHum = latestAmbient ? latestAmbient.humidity_percent : null;
+
+  const ambientChartData = ambientReadings.map((r) => ({
+    t: new Date(r.timestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+    ppm: r.ambient_h2s_ppm,
+  }));
+
   return (
     <div className="shell">
+      {/* Gas Leak Emergency Banner */}
+      {isLeakAlert && (
+        <div className="banner warn" style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <strong style={{ fontSize: 16 }}>🚨 CRITICAL AMBIENT GAS LEAK ALERT — {ambientH2s} ppm H₂S DETECTED</strong>
+            <p style={{ margin: "2px 0 0", fontSize: 13 }}>
+              Muster Point KIOSK-MUSTER-01 ambient sensor exceeds safety threshold (10 ppm). Evacuate area immediately!
+            </p>
+          </div>
+          <button className="btn danger" onClick={loadAmbient}>Acknowledge</button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="admin-header">
         <div>
@@ -300,7 +418,7 @@ function Dashboard({ session, onLogout }) {
           <button id="admin-logout-btn" className="btn ghost" onClick={onLogout}>
             Sign out
           </button>
-          <button className="btn" onClick={loadWorkers}>↻ Refresh</button>
+          <button className="btn" onClick={() => { loadWorkers(); loadAmbient(); }}>↻ Refresh</button>
         </div>
       </div>
 
@@ -378,39 +496,85 @@ function Dashboard({ session, onLogout }) {
         </table>
       </div>
 
-      {/* Environmental / Ambient panel — Phase 3 placeholder */}
-      <div className="card ambient-placeholder" style={{ marginTop: 16 }}>
-        <div className="ambient-header">
-          <h3>🌫 Environmental / Ambient Sensor Pack</h3>
-          <span className="pill fresh" style={{ fontSize: 12 }}>Phase 3 — Placeholder</span>
+      {/* Environmental / Ambient Telemetry Station — Live Phase 3 */}
+      <div className="card" style={{ marginTop: 20, borderColor: isLeakAlert ? "var(--danger)" : "var(--line)" }}>
+        <div className="ambient-header" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <h3>🌫 Environmental / Ambient IoT Telemetry Station</h3>
+            <p className="muted" style={{ margin: "2px 0 0", fontSize: 13 }}>
+              Real-time MQ-136 (H₂S gas) + DHT-11 (temp & humidity) telemetry stream · KIOSK-MUSTER-01
+            </p>
+          </div>
+          <div className="row" style={{ alignItems: "center", gap: 10 }}>
+            <span className="pill fresh" style={{ fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#3dba7a", display: "inline-block" }} />
+              LIVE TELEMETRY STREAMING
+            </span>
+            <button
+              id="inject-gas-spike-btn"
+              className="btn danger"
+              onClick={triggerGasSpike}
+              disabled={injectingGas}
+              style={{ fontSize: 12, padding: "6px 12px" }}
+            >
+              {injectingGas ? "Injecting…" : "⚠️ Simulate Gas Spike"}
+            </button>
+          </div>
         </div>
-        <p className="muted" style={{ marginTop: 8 }}>
-          Real-time MQ-136 (H₂S gas sensor) + DHT-11 (temperature + humidity) readings from the kiosk sensor
-          pack will appear here. This is a <strong>supplementary live layer only</strong> — the passive colorimetric
-          badge remains the primary PS-answering measurement.
-        </p>
-        <div className="ambient-grid">
-          <div className="ambient-tile">
-            <div className="ambient-label">Live H₂S (ambient)</div>
-            <div className="ambient-value">— ppm</div>
-            <div className="ambient-sub">MQ-136 · KIOSK-MUSTER-01</div>
+
+        <div className="ambient-grid" style={{ marginTop: 16 }}>
+          <div className="ambient-tile" style={{ borderColor: isLeakAlert ? "var(--danger)" : "var(--line)" }}>
+            <div className="ambient-label">Live H₂S (Ambient)</div>
+            <div className="ambient-value" style={{ color: isLeakAlert ? "var(--danger)" : "var(--ink)" }}>
+              {ambientH2s != null ? `${ambientH2s} ppm` : "— ppm"}
+            </div>
+            <div className="ambient-sub">MQ-136 · Sensor Array</div>
           </div>
           <div className="ambient-tile">
             <div className="ambient-label">Temperature</div>
-            <div className="ambient-value">— °C</div>
+            <div className="ambient-value">{ambientTemp != null ? `${ambientTemp} °C` : "— °C"}</div>
             <div className="ambient-sub">DHT-11</div>
           </div>
           <div className="ambient-tile">
             <div className="ambient-label">Humidity</div>
-            <div className="ambient-value">— %</div>
+            <div className="ambient-value">{ambientHum != null ? `${ambientHum} %` : "— %"}</div>
             <div className="ambient-sub">DHT-11</div>
           </div>
           <div className="ambient-tile">
-            <div className="ambient-label">Last reading</div>
-            <div className="ambient-value" style={{ fontSize: 16 }}>No data</div>
-            <div className="ambient-sub">Sensor pack not connected</div>
+            <div className="ambient-label">Last Reading</div>
+            <div className="ambient-value" style={{ fontSize: 15 }}>
+              {latestAmbient ? fmt(latestAmbient.timestamp) : "No data"}
+            </div>
+            <div className="ambient-sub">Telemetry status</div>
           </div>
         </div>
+
+        {/* Ambient H2S Telemetry Graph */}
+        {ambientChartData.length > 0 && (
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
+            <h4 style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>Ambient H₂S Gas Level Trend (ppm)</h4>
+            <ResponsiveContainer width="100%" height={160}>
+              <LineChart data={ambientChartData} margin={{ top: 4, right: 12, bottom: 4, left: -20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+                <XAxis dataKey="t" tick={{ fill: "var(--muted)", fontSize: 10 }} />
+                <YAxis tick={{ fill: "var(--muted)", fontSize: 10 }} unit=" ppm" domain={[0, "auto"]} />
+                <Tooltip
+                  contentStyle={{ background: "var(--panel)", border: "1px solid var(--line)", fontSize: 12 }}
+                  formatter={(v) => [`${v} ppm`, "Ambient H₂S"]}
+                />
+                <ReferenceLine y={10} stroke="var(--danger)" strokeDasharray="3 3" label={{ value: "10 ppm Alarm", fill: "var(--danger)", fontSize: 10 }} />
+                <Line
+                  type="monotone"
+                  dataKey="ppm"
+                  stroke={isLeakAlert ? "var(--danger)" : "var(--ok)"}
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </div>
     </div>
   );
