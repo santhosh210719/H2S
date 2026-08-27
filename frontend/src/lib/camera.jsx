@@ -21,10 +21,10 @@ class QrErrorBoundary extends Component {
           marginTop: 8,
         }}>
           <p style={{ color: "#f0a060", margin: "0 0 6px", fontWeight: 700 }}>
-            ⚠ Camera unavailable
+            ⚠️ Camera unavailable
           </p>
           <p style={{ color: "#9a8070", margin: 0, fontSize: 13 }}>
-            {this.state.message} — use the typed QR field above instead.
+            {this.state.message} — use the typed field or upload an image file.
           </p>
         </div>
       );
@@ -34,10 +34,12 @@ class QrErrorBoundary extends Component {
 }
 
 // ── QR Scanner ────────────────────────────────────────────────────────────────
-function QrScannerInner({ onDecode, active }) {
+function QrScannerInner({ onDecode, active, demoCodes }) {
   const regionId = "h2s-qr-region";
   const inst = useRef(null);
+  const fileInputRef = useRef(null);
   const [err, setErr] = useState("");
+  const [scanningFile, setScanningFile] = useState(false);
 
   useEffect(() => {
     if (!active) return undefined;
@@ -56,11 +58,11 @@ function QrScannerInner({ onDecode, active }) {
       .catch((e) => {
         const msg = e?.message || "";
         if (msg.includes("Permission") || msg.includes("NotAllowed")) {
-          setErr("Camera permission denied — use the typed QR field above.");
+          setErr("Camera permission denied by browser.");
         } else if (msg.includes("NotFound") || msg.includes("no camera")) {
-          setErr("No camera detected — use the typed QR field above.");
+          setErr("No camera hardware detected.");
         } else {
-          setErr("Camera unavailable — use the typed QR field above.");
+          setErr("Camera feed unavailable.");
         }
       });
     return () => {
@@ -70,18 +72,73 @@ function QrScannerInner({ onDecode, active }) {
     };
   }, [active, onDecode]);
 
+  // Decode QR code from uploaded image file
+  async function handleFileScan(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setScanningFile(true);
+    setErr("");
+    try {
+      const html5 = inst.current || new Html5Qrcode(regionId);
+      const text = await html5.scanFile(file, true);
+      onDecode(text);
+    } catch {
+      setErr("Could not detect a valid QR code in the uploaded image.");
+    } finally {
+      setScanningFile(false);
+    }
+  }
+
   return (
     <div style={{ marginTop: 8 }}>
       <div id={regionId} className="qr-box" />
+
       {err && (
-        <div style={{
-          background: "#1a1210",
-          border: "1px solid #6b3020",
-          borderRadius: 8,
-          padding: "10px 14px",
-          marginTop: 8,
-        }}>
-          <p style={{ color: "#f0a060", margin: 0, fontSize: 13 }}>{err}</p>
+        <div className="camera-fallback" style={{ marginTop: 8, padding: "16px 14px" }}>
+          <p className="camera-fallback-title" style={{ fontSize: 14 }}>⚠️ {err}</p>
+          <p className="camera-fallback-msg" style={{ margin: "4px 0 12px", fontSize: 12 }}>
+            You can type the code directly, pick a demo QR, or upload a QR image file:
+          </p>
+
+          {/* Quick select demo codes */}
+          {demoCodes && demoCodes.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 6px", textTransform: "uppercase", fontWeight: 700 }}>
+                Quick Select Demo QR:
+              </p>
+              <div className="row" style={{ gap: 6, justifyContent: "center" }}>
+                {demoCodes.map((code) => (
+                  <button
+                    key={code}
+                    className="btn primary"
+                    style={{ fontSize: 12, padding: "4px 10px" }}
+                    onClick={() => onDecode(code)}
+                  >
+                    {code}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* File Upload QR scanner fallback */}
+          <div style={{ borderTop: "1px dashed var(--line)", paddingTop: 10, marginTop: 10 }}>
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={handleFileScan}
+            />
+            <button
+              className="btn"
+              style={{ width: "100%", fontSize: 13 }}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={scanningFile}
+            >
+              📁 {scanningFile ? "Scanning image file…" : "Upload QR image file"}
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -101,14 +158,14 @@ export function CameraCapture({ onCapture }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const canvasRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [state, setState] = useState("idle"); // idle | requesting | ready | error | no-camera
   const [errMsg, setErrMsg] = useState("");
 
   useEffect(() => {
-    // Check if getUserMedia is available at all
     if (!navigator.mediaDevices?.getUserMedia) {
       setState("no-camera");
-      setErrMsg("getUserMedia not supported in this browser or context.");
+      setErrMsg("getUserMedia not supported in this browser context.");
       return;
     }
 
@@ -132,11 +189,11 @@ export function CameraCapture({ onCapture }) {
         if (msg.includes("NotAllowed") || msg.includes("Permission")) {
           setErrMsg("Camera permission denied by the browser.");
         } else if (msg.includes("NotFound") || msg.includes("DevicesNotFound")) {
-          setErrMsg("No camera device detected on this machine.");
+          setErrMsg("No camera hardware detected on this device.");
         } else if (msg.includes("NotReadable") || msg.includes("TrackStart")) {
           setErrMsg("Camera is in use by another application.");
         } else {
-          setErrMsg(`Camera error: ${msg || "unknown"}`);
+          setErrMsg(`Camera error: ${msg || "unavailable"}`);
         }
         setState("error");
       });
@@ -156,23 +213,41 @@ export function CameraCapture({ onCapture }) {
     canvas.toBlob((blob) => blob && onCapture(blob), "image/jpeg", 0.92);
   }
 
+  function handleFileChange(e) {
+    const file = e.target.files?.[0];
+    if (file) onCapture(file);
+  }
+
   // ── No camera / error state ──
   if (state === "error" || state === "no-camera") {
     return (
       <div className="camera-fallback">
         <div className="camera-fallback-icon">📷</div>
-        <p className="camera-fallback-title">No camera available</p>
+        <p className="camera-fallback-title">Camera Feed Unavailable</p>
         <p className="camera-fallback-msg">{errMsg}</p>
         <div className="camera-fallback-tips">
-          <p>To use the real camera capture:</p>
-          <ul>
-            <li>Allow camera permission in the browser address bar</li>
-            <li>Connect a webcam or use a device with a built-in camera</li>
-            <li>Ensure the page is served over HTTPS or localhost</li>
+          <p><strong>Options to proceed:</strong></p>
+          <ul style={{ margin: "6px 0 12px" }}>
+            <li>Click the lock/camera icon in your browser address bar to <strong>Allow Camera</strong></li>
+            <li>Or upload a photo of the wristband badge directly</li>
+            <li>Or use the synthetic badge generator below</li>
           </ul>
-          <p style={{ marginTop: 12 }}>
-            👇 Use the <strong>synthetic badge generator</strong> below to demo without a camera.
-          </p>
+
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={handleFileChange}
+          />
+          <button
+            type="button"
+            className="btn primary"
+            style={{ width: "100%", marginTop: 4 }}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            📁 Upload Wristband Photo File
+          </button>
         </div>
       </div>
     );
@@ -184,7 +259,7 @@ export function CameraCapture({ onCapture }) {
       <div className="camera-requesting">
         <div className="camera-requesting-spinner" />
         <p>Requesting camera access…</p>
-        <p className="muted" style={{ fontSize: 12 }}>Allow the camera permission in your browser.</p>
+        <p className="muted" style={{ fontSize: 12 }}>Click "Allow" if prompted by your browser.</p>
       </div>
     );
   }
@@ -219,15 +294,32 @@ export function CameraCapture({ onCapture }) {
           }} />
         </div>
       </div>
-      <button
-        type="button"
-        id="capture-badge-btn"
-        className="btn primary"
-        onClick={snap}
-        style={{ width: "100%", marginTop: 8 }}
-      >
-        📸 Capture badge photo
-      </button>
+      <div className="row" style={{ marginTop: 8 }}>
+        <button
+          type="button"
+          id="capture-badge-btn"
+          className="btn primary"
+          onClick={snap}
+          style={{ flex: 1 }}
+        >
+          📸 Capture badge photo
+        </button>
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={handleFileChange}
+        />
+        <button
+          type="button"
+          className="btn"
+          onClick={() => fileInputRef.current?.click()}
+          title="Upload image file instead of taking photo"
+        >
+          📁 File
+        </button>
+      </div>
     </div>
   );
 }

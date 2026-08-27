@@ -67,6 +67,7 @@ function ScreenA({ onWorker }) {
       {scanning && (
         <QrScanner
           active
+          demoCodes={["WKR-1001", "WKR-1002", "WKR-1003"]}
           onDecode={(text) => {
             setScanning(false);
             submit(text);
@@ -145,6 +146,7 @@ function ScreenB({ workerCode, onBound, onBack }) {
       {scanning && (
         <QrScanner
           active
+          demoCodes={["WB-2026-000481", "WB-2026-000482", "WB-2026-000483", "WB-2026-000484"]}
           onDecode={(text) => {
             setScanning(false);
             bind(text);
