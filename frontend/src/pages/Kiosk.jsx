@@ -42,7 +42,7 @@ function normalizeWorkerCode(value) {
 // ── Screen A: Scan Worker ID ──────────────────────────────────────────────────
 function ScreenA({ onWorker }) {
   const [typed, setTyped] = useState("");
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState(true);
   const [err, setErr] = useState("");
 
   function submit(val) {
@@ -59,34 +59,41 @@ function ScreenA({ onWorker }) {
       <h2>Scan Worker ID</h2>
       <p className="muted">Point the worker's ID badge QR at the kiosk camera, or type the ID below.</p>
 
-      <div className="kiosk-input-group">
-        <input
-          id="worker-id-input"
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit(typed)}
-          placeholder="e.g. WKR-1001"
-          autoFocus
-        />
-        <button id="worker-id-submit" className="btn primary" onClick={() => submit(typed)} disabled={!typed.trim()}>
-          Confirm →
+      {/* Primary Path: Live Camera Feed (Open by default) */}
+      {scanning && (
+        <div className="qr-scanner-container">
+          <QrScanner
+            active
+            onDecode={(text) => {
+              submit(text);
+            }}
+          />
+        </div>
+      )}
+
+      <div className="qr-toggle" style={{ margin: "4px 0 12px" }}>
+        <button className="btn ghost" style={{ fontSize: 12 }} onClick={() => setScanning((s) => !s)}>
+          {scanning ? "📷 Pause Camera" : "📷 Open QR Camera"}
         </button>
       </div>
 
-      <div className="qr-toggle">
-        <button className="btn ghost" onClick={() => setScanning((s) => !s)}>
-          {scanning ? "▲ Hide camera" : "▼ Use QR camera"}
-        </button>
+      {/* Secondary Fallback: Typed Input */}
+      <div className="qr-fallback-section">
+        <span className="qr-fallback-title">Manual Fallback (if QR code unreadable):</span>
+        <div className="kiosk-input-group">
+          <input
+            id="worker-id-input"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit(typed)}
+            placeholder="e.g. WKR-1001"
+          />
+          <button id="worker-id-submit" className="btn ghost" onClick={() => submit(typed)} disabled={!typed.trim()}>
+            Confirm →
+          </button>
+        </div>
       </div>
-      {scanning && (
-        <QrScanner
-          active
-          onDecode={(text) => {
-            setScanning(false);
-            submit(text);
-          }}
-        />
-      )}
+
       {err && <p className="warn" style={{ marginTop: 12 }}>{err}</p>}
     </div>
   );
@@ -95,7 +102,7 @@ function ScreenA({ onWorker }) {
 // ── Screen B: Scan Wristband QR ───────────────────────────────────────────────
 function ScreenB({ workerCode, onBound, onBack }) {
   const [typed, setTyped] = useState("");
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -124,41 +131,49 @@ function ScreenB({ workerCode, onBound, onBack }) {
       <div className="screen-icon">🔗</div>
       <h2>Scan Wristband QR</h2>
       <p className="muted">
-        Worker: <strong>{workerCode}</strong> · Scan the factory QR on a new wristband.
+        Worker: <strong>{workerCode}</strong> · Point the wristband's factory QR at the camera.
       </p>
 
-      <div className="kiosk-input-group">
-        <input
-          id="wristband-qr-input"
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && bind(typed)}
-          placeholder="e.g. WB-2026-000482"
-        />
-        <button
-          id="wristband-bind-btn"
-          className="btn primary"
-          disabled={busy || !typed.trim()}
-          onClick={() => bind(typed)}
-        >
-          {busy ? "Binding…" : "Bind →"}
+      {/* Primary Path: Live Camera Feed (Open by default) */}
+      {scanning && (
+        <div className="qr-scanner-container">
+          <QrScanner
+            active
+            onDecode={(text) => {
+              bind(text);
+            }}
+          />
+        </div>
+      )}
+
+      <div className="qr-toggle" style={{ margin: "4px 0 12px" }}>
+        <button className="btn ghost" style={{ fontSize: 12 }} onClick={() => setScanning((s) => !s)}>
+          {scanning ? "📷 Pause Camera" : "📷 Open QR Camera"}
         </button>
       </div>
 
-      <div className="qr-toggle">
-        <button className="btn ghost" onClick={() => setScanning((s) => !s)}>
-          {scanning ? "▲ Hide camera" : "▼ Use QR camera"}
-        </button>
+      {/* Secondary Fallback: Typed Input */}
+      <div className="qr-fallback-section">
+        <span className="qr-fallback-title">Manual Fallback (if QR code unreadable):</span>
+        <div className="kiosk-input-group">
+          <input
+            id="wristband-qr-input"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && bind(typed)}
+            placeholder="e.g. WB-2026-000482"
+          />
+          <button
+            id="wristband-bind-btn"
+            className="btn ghost"
+            disabled={busy || !typed.trim()}
+            onClick={() => bind(typed)}
+          >
+            {busy ? "Binding…" : "Bind →"}
+          </button>
+        </div>
       </div>
-      {scanning && (
-        <QrScanner
-          active
-          onDecode={(text) => {
-            setScanning(false);
-            bind(text);
-          }}
-        />
-      )}
+
       {err && <p className="warn" style={{ marginTop: 12 }}>{err}</p>}
 
       <button className="btn ghost" style={{ marginTop: 16 }} onClick={onBack}>
@@ -386,7 +401,7 @@ function ScreenE({ reason, onRescan, onBack }) {
 // ── Close Shift Flow (independent) ───────────────────────────────────────────
 function CloseShiftFlow({ onDone }) {
   const [typed, setTyped] = useState("");
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
@@ -413,24 +428,35 @@ function CloseShiftFlow({ onDone }) {
       <h2>Close Shift & Lock Wristband</h2>
       <p className="muted">Scan or type the wristband QR to permanently mark it used.</p>
 
-      <div className="kiosk-input-group">
-        <input
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && close(typed)}
-          placeholder="e.g. WB-2026-000481"
-        />
-        <button className="btn danger" disabled={busy || !typed.trim()} onClick={() => close(typed)}>
-          {busy ? "Closing…" : "Lock QR"}
+      {/* Primary Path: Live Camera Feed */}
+      {scanning && (
+        <div className="qr-scanner-container">
+          <QrScanner active onDecode={(t) => close(t)} />
+        </div>
+      )}
+
+      <div className="qr-toggle" style={{ margin: "4px 0 12px" }}>
+        <button className="btn ghost" style={{ fontSize: 12 }} onClick={() => setScanning((s) => !s)}>
+          {scanning ? "📷 Pause Camera" : "📷 Open QR Camera"}
         </button>
       </div>
 
-      <div className="qr-toggle">
-        <button className="btn ghost" onClick={() => setScanning((s) => !s)}>
-          {scanning ? "▲ Hide camera" : "▼ Use QR camera"}
-        </button>
+      {/* Secondary Fallback: Typed Input */}
+      <div className="qr-fallback-section">
+        <span className="qr-fallback-title">Manual Fallback (if QR code unreadable):</span>
+        <div className="kiosk-input-group">
+          <input
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && close(typed)}
+            placeholder="e.g. WB-2026-000481"
+          />
+          <button className="btn danger" disabled={busy || !typed.trim()} onClick={() => close(typed)}>
+            {busy ? "Closing…" : "Lock QR"}
+          </button>
+        </div>
       </div>
-      {scanning && <QrScanner active onDecode={(t) => { setScanning(false); close(t); }} />}
+
       {msg && <div className={`banner ${msg.ok ? "" : "warn"}`} style={{ marginTop: 12 }}>{msg.text}</div>}
 
       <button className="btn ghost" style={{ marginTop: 16 }} onClick={onDone}>

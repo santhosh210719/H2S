@@ -52,6 +52,15 @@ export const supabaseStore = {
     return { ok: true, wristband: data };
   },
 
+  async listWristbands() {
+    const { data, error } = await supabaseAdmin
+      .from("wristbands")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data || [];
+  },
+
   async bindWristband({ worker_id, wristband_qr, kiosk_location }) {
     const { data: w } = await supabaseAdmin.from("workers").select("*").eq("worker_id", worker_id).maybeSingle();
     if (!w) return { ok: false, status: 404, error: "Worker ID not recognised." };

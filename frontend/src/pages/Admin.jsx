@@ -608,6 +608,178 @@ function ManageWorkers({ session }) {
   );
 }
 
+// ── Register & Manage Wristbands Panel ────────────────────────────────────────
+function ManageWristbands({ session }) {
+  const [wristbands, setWristbands] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [formErr, setFormErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [successMsg, setSuccessMsg] = useState("");
+
+  const [fQr, setFQr] = useState("");
+  const [fBatch, setFBatch] = useState("");
+
+  async function authHeaders() {
+    let token = "";
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      token = data?.session?.access_token || session?.access_token || "";
+    } else {
+      token = session?.access_token || "local-admin-dev-token";
+    }
+    return {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    };
+  }
+
+  async function loadWristbands() {
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(apiUrl("/api/admin/wristbands"), { headers });
+      const data = await res.json();
+      if (data.ok) setWristbands(data.wristbands || []);
+      else setErr(data.error || "Failed to load wristbands.");
+    } catch {
+      setErr("API error loading wristbands.");
+    }
+  }
+
+  useEffect(() => {
+    loadWristbands().finally(() => setLoading(false));
+  }, []);
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    setFormErr("");
+    setSuccessMsg("");
+
+    const qr = fQr.trim();
+    if (!qr) {
+      setFormErr("Wristband QR is required.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(apiUrl("/api/admin/wristbands"), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          wristband_qr: qr,
+          batch_id: fBatch.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setFormErr(data.error || "Failed to register wristband.");
+        return;
+      }
+      setSuccessMsg(`✅ Wristband ${data.wristband?.wristband_qr || qr} registered successfully.`);
+      setFQr("");
+      setFBatch("");
+      await loadWristbands();
+    } catch {
+      setFormErr("Network error.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (loading) return <p className="muted">Loading wristbands…</p>;
+
+  function statusPill(st) {
+    if (st === "available") return <span className="pill fresh">Available</span>;
+    if (st === "bound") return <span className="pill medium">Bound</span>;
+    if (st === "used") return <span className="pill very_high">Used</span>;
+    return <span className="muted">{st || "—"}</span>;
+  }
+
+  return (
+    <div>
+      {err && <div className="banner warn" style={{ marginBottom: 16 }}>{err}</div>}
+
+      {/* Add Wristband Form */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <h3 style={{ marginBottom: 12 }}>Register new wristband</h3>
+        <form className="add-worker-form" onSubmit={handleAdd}>
+          <div>
+            <label style={{ fontSize: 12, color: "var(--muted)" }}>Wristband QR Code</label>
+            <input
+              id="wristband-qr-admin-input"
+              value={fQr}
+              onChange={(e) => setFQr(e.target.value)}
+              placeholder="e.g. WB-2026-000482"
+              required
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: "var(--muted)" }}>Batch ID (optional)</label>
+            <input
+              id="wristband-batch-admin-input"
+              value={fBatch}
+              onChange={(e) => setFBatch(e.target.value)}
+              placeholder="e.g. BATCH-2026-01"
+            />
+          </div>
+          <div className="full-width">
+            <button id="register-wristband-btn" className="btn primary" type="submit" disabled={busy}>
+              {busy ? "Registering…" : "🏷️ Register wristband"}
+            </button>
+          </div>
+          {formErr && (
+            <p className="warn full-width" style={{ margin: 0, fontSize: 13 }}>{formErr}</p>
+          )}
+          {successMsg && (
+            <p className="ok full-width" style={{ margin: 0, fontSize: 13 }}>{successMsg}</p>
+          )}
+        </form>
+      </div>
+
+      {/* Wristbands Table */}
+      <div className="card">
+        <div className="card-head">
+          <h3>Registered wristbands</h3>
+          <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+            {wristbands.length} wristband{wristbands.length !== 1 ? "s" : ""} in inventory
+          </p>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Wristband QR</th>
+              <th>Batch ID</th>
+              <th>Status</th>
+              <th>Registered Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {wristbands.length === 0 && (
+              <tr>
+                <td colSpan={4} className="muted">
+                  No wristbands registered yet. Use the form above to add one.
+                </td>
+              </tr>
+            )}
+            {wristbands.map((wb) => (
+              <tr key={wb.wristband_qr}>
+                <td style={{ fontFamily: "monospace", fontSize: 13 }}>
+                  <strong>{wb.wristband_qr}</strong>
+                </td>
+                <td className="muted" style={{ fontSize: 12 }}>{wb.batch_id || "—"}</td>
+                <td>{statusPill(wb.status)}</td>
+                <td className="muted" style={{ fontSize: 12 }}>{fmt(wb.created_at)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Admin Dashboard ──────────────────────────────────────────────────────
 function Dashboard({ session, onLogout }) {
   const [workers, setWorkers] = useState([]);
@@ -762,11 +934,18 @@ function Dashboard({ session, onLogout }) {
         >
           👷 Manage Workers
         </button>
+        <button
+          id="manage-wristbands-tab"
+          className={`admin-tab ${tab === "wristbands" ? "active" : ""}`}
+          onClick={() => setTab("wristbands")}
+        >
+          🏷️ Wristbands
+        </button>
       </div>
 
-      {tab === "manage" ? (
-        <ManageWorkers session={session} />
-      ) : (
+      {tab === "manage" && <ManageWorkers session={session} />}
+      {tab === "wristbands" && <ManageWristbands session={session} />}
+      {tab === "desk" && (
         <>
           {/* Workers table */}
           <div className="card" style={{ marginTop: 20 }}>

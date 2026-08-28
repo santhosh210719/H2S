@@ -36,6 +36,7 @@ async function requireAdmin(req, res, next) {
     // Verify Supabase JWT by calling getUser (service_role can do this)
     const { data, error } = await supabaseAdmin.auth.getUser(token);
     if (error || !data?.user) {
+      console.error("[requireAdmin] Supabase getUser failed:", error?.message || error, "| token length:", token.length);
       return res.status(401).json({ ok: false, error: "Invalid or expired admin session." });
     }
     req.adminUser = data.user;
@@ -186,6 +187,19 @@ adminRouter.patch("/workers/:id/activate", requireAdmin, async (req, res) => {
     const result = await store.activateWorker(req.params.id);
     if (!result.ok) return res.status(result.status || 500).json(result);
     return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/wristbands
+ * Returns all registered wristbands.
+ */
+adminRouter.get("/wristbands", requireAdmin, async (_req, res) => {
+  try {
+    const wristbands = await store.listWristbands();
+    return res.json({ ok: true, wristbands });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }

@@ -651,3 +651,35 @@ tr:last-child td { border-bottom: none; }
 /* Worker mgmt table actions */
 .worker-actions { display: flex; gap: 6px; }
 .worker-actions .btn { padding: 4px 10px; font-size: 11px; }
+
+/* ── Prominent Kiosk Camera Viewport ────────────────────────────────────────── */
+.qr-scanner-container {
+  width: 100%;
+  max-width: 480px;
+  margin: 16px auto 12px;
+  text-align: center;
+}
+.qr-box {
+  width: 100%;
+  max-width: 440px;
+  margin: 0 auto;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  border: 2px solid var(--accent);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.qr-fallback-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+  text-align: left;
+}
+.qr-fallback-title {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

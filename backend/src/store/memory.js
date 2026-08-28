@@ -63,9 +63,13 @@ export const memoryStore = {
 
   async registerWristband({ wristband_qr, batch_id }) {
     if (band(wristband_qr)) return { ok: false, status: 409, error: "Wristband already registered." };
-    const wb = { wristband_qr, batch_id: batch_id || "BATCH-UNSET", status: "available" };
+    const wb = { wristband_qr, batch_id: batch_id || "BATCH-UNSET", status: "available", created_at: nowIso() };
     db.wristbands.push(wb);
     return { ok: true, wristband: wb };
+  },
+
+  async listWristbands() {
+    return [...db.wristbands].reverse();
   },
 
   // ── Shift operations ─────────────────────────────────────────────────────────
