@@ -102,16 +102,6 @@ alter table public.scan_logs replica identity full;
 alter table public.shift_bindings replica identity full;
 alter table public.live_ambient_readings replica identity full;
 
-insert into public.workers (worker_id, name, department, shift) values
-  ('WKR-1001', 'Arun Kumar', 'CDU', 'A'),
-  ('WKR-1002', 'Priya Nair', 'SRU', 'A'),
-  ('WKR-1003', 'Rahul Shetty', 'Utilities', 'B')
-on conflict (worker_id) do nothing;
+-- Workers and wristbands are created through the admin onboarding API.
+-- No seed data — run POST /api/admin/workers to create the first worker.
 
-insert into public.wristbands (wristband_qr, batch_id, manufactured_date, status) values
-  ('WB-2026-000481', 'BATCH-26-01', '2026-06-01', 'available'),
-  ('WB-2026-000482', 'BATCH-26-01', '2026-06-01', 'available'),
-  ('WB-2026-000483', 'BATCH-26-01', '2026-06-01', 'available'),
-  ('WB-2026-000484', 'BATCH-26-01', '2026-06-01', 'available'),
-  ('WB-2026-000499', 'BATCH-25-12', '2025-12-15', 'used')
-on conflict (wristband_qr) do nothing;

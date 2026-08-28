@@ -11,8 +11,10 @@ import cors from "cors";
 import multer from "multer";
 import { kioskRouter } from "./routes/kiosk.js";
 import { adminRouter } from "./routes/admin.js";
+import { authRouter } from "./routes/auth.js";
 import { store } from "./store/index.js";
 import { analyzeBadgeImage } from "./lib/mlClient.js";
+import { workerAuthMiddleware } from "./lib/auth.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
@@ -36,9 +38,10 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-// ─── Sub-routers (existing paths, used by frontend) ──────────────────────────
-app.use("/api/kiosk", kioskRouter);
-app.use("/api/admin", adminRouter);
+// ─── Sub-routers ─────────────────────────────────────────────────────────────
+app.use("/api/auth", authRouter);
+app.use("/api/kiosk", kioskRouter);     // worker token enforced inside kioskRouter
+app.use("/api/admin", adminRouter);     // admin JWT enforced inside adminRouter
 
 // ─── Spec-required flat routes (Phase 1 checklist) ───────────────────────────
 // These mirror the kiosk/admin sub-routes so the spec API paths work too.
@@ -47,7 +50,7 @@ app.use("/api/admin", adminRouter);
  * POST /api/bind-wristband
  * Body: { worker_id, wristband_qr, kiosk_location? }
  */
-app.post("/api/bind-wristband", async (req, res) => {
+app.post("/api/bind-wristband", workerAuthMiddleware, async (req, res) => {
   const { worker_id, wristband_qr, kiosk_location } = req.body || {};
   if (!worker_id || !wristband_qr) {
     return res.status(400).json({ ok: false, error: "worker_id and wristband_qr are required." });
@@ -66,7 +69,7 @@ app.post("/api/bind-wristband", async (req, res) => {
  * Spec-required flat route — same real pipeline as /api/kiosk/scan.
  * Multipart: image (file) + wristband_qr (field)
  */
-app.post("/api/scan", upload.single("image"), async (req, res) => {
+app.post("/api/scan", workerAuthMiddleware, upload.single("image"), async (req, res) => {
   const wristband_qr = String(req.body?.wristband_qr || "").trim();
   if (!wristband_qr) return res.status(400).json({ ok: false, error: "wristband_qr required." });
   if (!req.file?.buffer) return res.status(400).json({ ok: false, error: "image file required." });
@@ -170,7 +173,7 @@ app.get("/api/workers/:id/history", async (req, res) => {
  * POST /api/close-shift
  * Body: { wristband_qr }
  */
-app.post("/api/close-shift", async (req, res) => {
+app.post("/api/close-shift", workerAuthMiddleware, async (req, res) => {
   const { wristband_qr } = req.body || {};
   if (!wristband_qr) return res.status(400).json({ ok: false, error: "wristband_qr required." });
   const result = await store.closeShift({ wristband_qr: String(wristband_qr).trim() });

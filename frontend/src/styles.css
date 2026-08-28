@@ -588,3 +588,66 @@ tr:last-child td { border-bottom: none; }
 .ambient-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 8px; }
 .ambient-value { font-size: 1.6rem; font-weight: 700; color: var(--muted); }
 .ambient-sub   { font-size: 11px; color: var(--muted); margin-top: 4px; opacity: 0.6; }
+
+/* ── Worker Dashboard ──────────────────────────────────────────────────────── */
+.worker-dash { max-width: 680px; margin: 0 auto; }
+.dash-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--line);
+}
+.dash-cards {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+}
+@media (max-width: 560px) { .dash-cards { grid-template-columns: 1fr; } }
+.dash-card {
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 16px; text-align: center;
+}
+.dash-card-label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); margin-bottom: 8px;
+}
+.dash-card-value { font-size: 1.1rem; font-weight: 700; }
+.dash-cta {
+  display: flex; align-items: center; gap: 16px;
+  margin-top: 20px; padding: 20px 24px;
+  background: linear-gradient(135deg, #1a2520, #1e2e28);
+  border: 1px solid var(--accent); border-radius: var(--r);
+  color: var(--ink); text-decoration: none;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.dash-cta:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(201,162,39,0.15); }
+
+/* ── Admin tabs ────────────────────────────────────────────────────────────── */
+.admin-tabs {
+  display: flex; gap: 0; border-bottom: 2px solid var(--line);
+  margin-bottom: 20px;
+}
+.admin-tab {
+  padding: 10px 20px; background: transparent; border: none;
+  color: var(--muted); font-weight: 600; font-size: 14px; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.admin-tab:hover { color: var(--ink); }
+.admin-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ── Add Worker Form ───────────────────────────────────────────────────────── */
+.add-worker-form {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  max-width: 600px;
+}
+.add-worker-form .full-width { grid-column: 1 / -1; }
+@media (max-width: 560px) { .add-worker-form { grid-template-columns: 1fr; } }
+
+/* ── PIN reveal ────────────────────────────────────────────────────────────── */
+.pin-reveal {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 10px 16px; background: #1a2810; border: 1px solid var(--ok);
+  border-radius: var(--r-sm); font-family: monospace; font-size: 1.2rem;
+  font-weight: 700; color: var(--ok); letter-spacing: 0.15em;
+}
+
+/* Worker mgmt table actions */
+.worker-actions { display: flex; gap: 6px; }
+.worker-actions .btn { padding: 4px 10px; font-size: 11px; }

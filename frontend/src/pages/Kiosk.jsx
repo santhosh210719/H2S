@@ -1,17 +1,23 @@
 import { useCallback, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { CameraCapture, QrScanner, makeSyntheticBadge } from "../lib/camera.jsx";
 import { apiUrl } from "../lib/supabase.js";
 
 const KIOSK_ID = "KIOSK-MUSTER-01";
-const DEMO_WORKER_CODES = Array.from({ length: 50 }, (_, index) => `WKR-${String(1001 + index).padStart(4, "0")}`);
-const DEMO_WRISTBAND_CODES = Array.from({ length: 51 }, (_, index) => 481 + index)
-  .filter((number) => number !== 499)
-  .map((number) => `WB-2026-${String(number).padStart(6, "0")}`);
 
+/** Get the worker session token from sessionStorage. */
+function getWorkerToken() {
+  return sessionStorage.getItem("workerToken") || "";
+}
+
+/** POST helper — automatically attaches the worker Bearer token. */
 async function postJson(path, body) {
   const res = await fetch(apiUrl(path), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${getWorkerToken()}`,
+    },
     body: JSON.stringify(body),
   });
   const data = await res.json();
@@ -75,7 +81,6 @@ function ScreenA({ onWorker }) {
       {scanning && (
         <QrScanner
           active
-          demoCodes={DEMO_WORKER_CODES}
           onDecode={(text) => {
             setScanning(false);
             submit(text);
@@ -83,12 +88,6 @@ function ScreenA({ onWorker }) {
         />
       )}
       {err && <p className="warn" style={{ marginTop: 12 }}>{err}</p>}
-
-      <div className="seed-hint card" style={{ marginTop: 24 }}>
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          <strong>Demo IDs:</strong> 50 worker IDs available: WKR-1001 through WKR-1050
-        </p>
-      </div>
     </div>
   );
 }
@@ -154,7 +153,6 @@ function ScreenB({ workerCode, onBound, onBack }) {
       {scanning && (
         <QrScanner
           active
-          demoCodes={DEMO_WRISTBAND_CODES}
           onDecode={(text) => {
             setScanning(false);
             bind(text);
@@ -162,14 +160,6 @@ function ScreenB({ workerCode, onBound, onBack }) {
         />
       )}
       {err && <p className="warn" style={{ marginTop: 12 }}>{err}</p>}
-
-      <div className="seed-hint card" style={{ marginTop: 24 }}>
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          <strong>Available bands:</strong> 50 demo bands: WB-2026-000481 through WB-2026-000531 (except 000499)
-          <br />
-          <strong>Rejected demo:</strong> WB-2026-000499 (already used)
-        </p>
-      </div>
 
       <button className="btn ghost" style={{ marginTop: 16 }} onClick={onBack}>
         ← Back to worker ID
@@ -192,7 +182,11 @@ function ScreenC({ bandQr, workerName, onResult, onQualityFail, onBack }) {
       fd.append("image", blob, "badge.jpg");
       fd.append("wristband_qr", bandQr);
       fd.append("kiosk_id", KIOSK_ID);
-      const res = await fetch(apiUrl("/api/kiosk/scan"), { method: "POST", body: fd });
+      const res = await fetch(apiUrl("/api/kiosk/scan"), {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${getWorkerToken()}` },
+        body: fd,
+      });
       const data = await res.json();
       if (res.status === 422 || data.code === "QUALITY_FAIL") {
         onQualityFail(data.error || "Image unclear — please re-scan");
@@ -236,7 +230,7 @@ function ScreenC({ bandQr, workerName, onResult, onQualityFail, onBack }) {
 
       <div className="synthetic-panel card" style={{ marginTop: 16 }}>
         <p style={{ margin: "0 0 8px", fontSize: 13 }} className="muted">
-          No physical badge? Generate a synthetic 2-zone image for demo:
+          No physical badge? Use the synthetic image generator:
         </p>
         <label className="slider-label">
           Simulated exposure (darkness) — <strong>{relDark.toFixed(2)}</strong>
@@ -448,6 +442,7 @@ function CloseShiftFlow({ onDone }) {
 
 // ── Root Kiosk Page ───────────────────────────────────────────────────────────
 export function KioskPage() {
+  const navigate = useNavigate();
   // mode: idle | start-a | start-b | scan-c | result-d | quality-e | close
   const [mode, setMode] = useState("idle");
   const [workerCode, setWorkerCode] = useState("");
@@ -455,6 +450,14 @@ export function KioskPage() {
   const [bandQr, setBandQr] = useState("");
   const [scanResult, setScanResult] = useState(null);
   const [qualityReason, setQualityReason] = useState("");
+
+  const loggedInId = sessionStorage.getItem("workerId") || "";
+
+  function endSession() {
+    sessionStorage.removeItem("workerToken");
+    sessionStorage.removeItem("workerId");
+    navigate("/worker-login", { replace: true });
+  }
 
   function reset() {
     setMode("idle");
@@ -469,7 +472,27 @@ export function KioskPage() {
     <div className="kiosk-shell">
       <div className="kiosk-header">
         <span className="kiosk-badge">MRPL Muster Kiosk · {KIOSK_ID}</span>
-        <span className="kiosk-tagline">Fixed station — worker phones are not used for scanning</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {loggedInId && (
+            <span className="kiosk-tagline">
+              Logged in: <strong>{loggedInId}</strong>
+            </span>
+          )}
+          <button
+            className="btn ghost"
+            style={{ fontSize: 12, padding: "6px 14px" }}
+            onClick={() => navigate("/worker-dashboard")}
+          >
+            ← Dashboard
+          </button>
+          <button
+            className="btn danger"
+            style={{ fontSize: 12, padding: "6px 14px" }}
+            onClick={endSession}
+          >
+            🔒 Log out
+          </button>
+        </div>
       </div>
 
       {/* Progress stepper */}

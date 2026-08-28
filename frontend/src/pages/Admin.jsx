@@ -39,13 +39,12 @@ function LoginScreen({ onLogin }) {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Should never render without supabase — parent guards this
+  if (!supabase) return null;
+
   async function login(e) {
     e.preventDefault();
     setErr("");
-    if (!supabase) {
-      onLogin({ user: { email: email.trim() || "demo@mrpl.co.in" } });
-      return;
-    }
     setBusy(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setBusy(false);
@@ -58,8 +57,7 @@ function LoginScreen({ onLogin }) {
         <div className="login-logo">H₂S-DOSAI</div>
         <p className="login-tagline">Safety Desk — Admin Login</p>
         <p className="muted" style={{ fontSize: 13, marginBottom: 24 }}>
-          Supabase Auth · kiosk stations are unauthenticated and talk only to the API.
-          {!supabase && " (Demo mode — no Supabase keys set, click Sign in to bypass.)"}
+          Supabase Auth · enter your admin email and password.
         </p>
         <form className="login-form" onSubmit={login}>
           <input
@@ -68,7 +66,7 @@ function LoginScreen({ onLogin }) {
             placeholder="Admin email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            required={!!supabase}
+            required
             autoFocus
           />
           <input
@@ -77,7 +75,7 @@ function LoginScreen({ onLogin }) {
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            required={!!supabase}
+            required
           />
           <button id="admin-login-btn" className="btn primary" type="submit" disabled={busy}>
             {busy ? "Signing in…" : "Sign in →"}
@@ -284,11 +282,338 @@ function WorkerHistory({ worker, onBack }) {
   );
 }
 
+// ── Manage Workers Panel (inside admin dashboard) ─────────────────────────────
+function ManageWorkers({ session }) {
+  const [workers, setWorkers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [formErr, setFormErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [nextId, setNextId] = useState("WKR-0001");
+  const [revealedPin, setRevealedPin] = useState(null); // { worker_id, pin }
+  const [resetReveal, setResetReveal] = useState(null); // { worker_id, new_pin }
+
+  // Form fields
+  const [fId, setFId] = useState("");
+  const [fName, setFName] = useState("");
+  const [fDept, setFDept] = useState("");
+  const [fShift, setFShift] = useState("");
+  const [fPin, setFPin] = useState("");
+  const [fPinConfirm, setFPinConfirm] = useState("");
+
+  async function authHeaders() {
+    let token = "";
+    if (supabase) {
+      const { data } = await supabase.auth.getSession();
+      token = data?.session?.access_token || session?.access_token || "";
+    } else {
+      token = session?.access_token || "local-admin-dev-token";
+    }
+    return {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    };
+  }
+
+  async function loadWorkers() {
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(apiUrl("/api/admin/workers"), { headers });
+      const data = await res.json();
+      if (data.ok) setWorkers(data.workers || []);
+      else setErr(data.error || "Failed to load workers.");
+    } catch {
+      setErr("API error loading workers.");
+    }
+  }
+
+  async function loadNextId() {
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(apiUrl("/api/admin/workers/next-id"), { headers });
+      const data = await res.json();
+      if (data.ok) {
+        setNextId(data.next_id);
+        if (!fId) setFId(data.next_id);
+      }
+    } catch { /* ignore */ }
+  }
+
+  useEffect(() => {
+    Promise.all([loadWorkers(), loadNextId()])
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    setFormErr("");
+    setRevealedPin(null);
+
+    if (fPin !== fPinConfirm) {
+      setFormErr("PINs do not match.");
+      return;
+    }
+    if (!/^\d{4,6}$/.test(fPin)) {
+      setFormErr("PIN must be 4–6 digits.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(apiUrl("/api/admin/workers"), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          worker_id: fId.trim().toUpperCase(),
+          name: fName.trim(),
+          department: fDept.trim(),
+          shift: fShift.trim(),
+          pin: fPin,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setFormErr(data.error || "Failed to create worker.");
+        return;
+      }
+      // Show PIN once
+      setRevealedPin({ worker_id: data.worker?.worker_id || fId, pin: fPin });
+      // Reset form
+      setFId(""); setFName(""); setFDept(""); setFShift("");
+      setFPin(""); setFPinConfirm("");
+      await loadWorkers();
+      await loadNextId();
+    } catch {
+      setFormErr("Network error.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleActive(wid, currentlyActive) {
+    const endpoint = currentlyActive
+      ? `/api/admin/workers/${wid}/deactivate`
+      : `/api/admin/workers/${wid}/activate`;
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(apiUrl(endpoint), {
+        method: "PATCH",
+        headers,
+      });
+      const data = await res.json();
+      if (data.ok) await loadWorkers();
+      else setErr(data.error || "Failed to update worker.");
+    } catch {
+      setErr("Network error.");
+    }
+  }
+
+  async function resetPin(wid) {
+    setResetReveal(null);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(apiUrl(`/api/admin/workers/${wid}/reset-pin`), {
+        method: "PATCH",
+        headers,
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setResetReveal({ worker_id: wid, new_pin: data.new_pin });
+      } else {
+        setErr(data.error || "Failed to reset PIN.");
+      }
+    } catch {
+      setErr("Network error.");
+    }
+  }
+
+  if (loading) return <p className="muted">Loading workers…</p>;
+
+  return (
+    <div>
+      {err && <div className="banner warn" style={{ marginBottom: 16 }}>{err}</div>}
+
+      {/* Add Worker Form */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <h3 style={{ marginBottom: 12 }}>Add new worker</h3>
+        <form className="add-worker-form" onSubmit={handleAdd}>
+          <div>
+            <label style={{ fontSize: 12, color: "var(--muted)" }}>Worker ID</label>
+            <input
+              value={fId}
+              onChange={(e) => setFId(e.target.value.toUpperCase())}
+              placeholder={nextId}
+              required
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: "var(--muted)" }}>Full name</label>
+            <input
+              value={fName}
+              onChange={(e) => setFName(e.target.value)}
+              placeholder="e.g. Arun Kumar"
+              required
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: "var(--muted)" }}>Department</label>
+            <input
+              value={fDept}
+              onChange={(e) => setFDept(e.target.value)}
+              placeholder="e.g. CDU, VDU, SRU"
+              required
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: "var(--muted)" }}>Shift</label>
+            <input
+              value={fShift}
+              onChange={(e) => setFShift(e.target.value)}
+              placeholder="e.g. A, B, C, General"
+              required
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: "var(--muted)" }}>PIN (4–6 digits)</label>
+            <input
+              type="password"
+              inputMode="numeric"
+              value={fPin}
+              onChange={(e) => setFPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="e.g. 1234"
+              required
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: "var(--muted)" }}>Confirm PIN</label>
+            <input
+              type="password"
+              inputMode="numeric"
+              value={fPinConfirm}
+              onChange={(e) => setFPinConfirm(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="Re-enter PIN"
+              required
+            />
+          </div>
+          <div className="full-width">
+            <button className="btn primary" type="submit" disabled={busy}>
+              {busy ? "Creating…" : "➕ Add worker"}
+            </button>
+          </div>
+          {formErr && (
+            <p className="warn full-width" style={{ margin: 0, fontSize: 13 }}>{formErr}</p>
+          )}
+        </form>
+
+        {/* One-time PIN reveal after creation */}
+        {revealedPin && (
+          <div style={{ marginTop: 16, padding: 12, background: "var(--panel-2)", borderRadius: "var(--r-sm)" }}>
+            <p style={{ margin: "0 0 8px", fontSize: 13 }}>
+              ✅ Worker <strong>{revealedPin.worker_id}</strong> created. Give them this PIN:
+            </p>
+            <div className="pin-reveal">
+              {revealedPin.pin}
+            </div>
+            <p className="muted" style={{ fontSize: 11, margin: "8px 0 0" }}>
+              This PIN will not be shown again. If lost, use "Reset PIN" to generate a new one.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Reset PIN reveal */}
+      {resetReveal && (
+        <div className="banner" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 16 }}>
+          <div>
+            <p style={{ margin: 0, fontSize: 13 }}>
+              🔑 New PIN for <strong>{resetReveal.worker_id}</strong>:
+            </p>
+            <div className="pin-reveal" style={{ marginTop: 8 }}>
+              {resetReveal.new_pin}
+            </div>
+            <p className="muted" style={{ fontSize: 11, margin: "6px 0 0" }}>
+              This PIN is shown exactly once. Relay it to the worker now.
+            </p>
+          </div>
+          <button className="btn ghost" onClick={() => setResetReveal(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {/* Workers table */}
+      <div className="card">
+        <div className="card-head">
+          <h3>All workers</h3>
+          <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+            {workers.length} worker{workers.length !== 1 ? "s" : ""} registered
+          </p>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Worker ID</th>
+              <th>Name</th>
+              <th>Dept</th>
+              <th>Shift</th>
+              <th>Status</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {workers.length === 0 && (
+              <tr>
+                <td colSpan={7} className="muted">
+                  No workers yet. Use the form above to add the first worker.
+                </td>
+              </tr>
+            )}
+            {workers.map((w) => (
+              <tr key={w.worker_id} style={{ opacity: w.active === false ? 0.5 : 1 }}>
+                <td style={{ fontFamily: "monospace", fontSize: 12 }}>{w.worker_id}</td>
+                <td><strong>{w.name}</strong></td>
+                <td>{w.department || "—"}</td>
+                <td>{w.shift || "—"}</td>
+                <td>
+                  {w.active !== false ? (
+                    <span className="ok" style={{ fontSize: 12 }}>Active</span>
+                  ) : (
+                    <span className="muted" style={{ fontSize: 12 }}>Inactive</span>
+                  )}
+                </td>
+                <td className="muted" style={{ fontSize: 12 }}>{fmt(w.created_at)}</td>
+                <td>
+                  <div className="worker-actions">
+                    <button
+                      className="btn ghost"
+                      title="Reset PIN"
+                      onClick={() => resetPin(w.worker_id)}
+                    >
+                      🔑
+                    </button>
+                    <button
+                      className={`btn ${w.active !== false ? "danger" : "primary"}`}
+                      onClick={() => toggleActive(w.worker_id, w.active !== false)}
+                    >
+                      {w.active !== false ? "Deactivate" : "Activate"}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Admin Dashboard ──────────────────────────────────────────────────────
 function Dashboard({ session, onLogout }) {
   const [workers, setWorkers] = useState([]);
   const [notice, setNotice] = useState("Loading…");
   const [selectedWorker, setSelectedWorker] = useState(null);
+  const [tab, setTab] = useState("desk");
 
   // Live Ambient Telemetry State
   const [ambientReadings, setAmbientReadings] = useState([]);
@@ -408,9 +733,9 @@ function Dashboard({ session, onLogout }) {
       )}
 
       {/* Header */}
-      <div className="admin-header">
+      <div className="admin-header" style={{ marginBottom: 16 }}>
         <div>
-          <h1 style={{ margin: 0 }}>Live Exposure Desk</h1>
+          <h1 style={{ margin: 0 }}>Safety Desk Admin</h1>
           <p className="muted" style={{ margin: "4px 0 0" }}>{notice}</p>
         </div>
         <div className="row" style={{ alignItems: "center", gap: 12 }}>
@@ -422,33 +747,56 @@ function Dashboard({ session, onLogout }) {
         </div>
       </div>
 
-      {/* Workers table */}
-      <div className="card" style={{ marginTop: 20 }}>
-        <div className="card-head">
-          <h3>Workers — Latest Exposure Reading</h3>
-          <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
-            Passive badge is the primary measurement. Click any row for full history.
-          </p>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Worker</th>
-              <th>Department</th>
-              <th>Shift</th>
-              <th>Active Band</th>
-              <th>Latest Dose</th>
-              <th>Risk Band</th>
-              <th>Confidence</th>
-              <th>Scan Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            {workers.length === 0 && (
-              <tr>
-                <td colSpan={8} className="muted">No workers found. Run migrations + seed data.</td>
-              </tr>
-            )}
+      {/* Admin Tabs */}
+      <div className="admin-tabs">
+        <button
+          className={`admin-tab ${tab === "desk" ? "active" : ""}`}
+          onClick={() => setTab("desk")}
+        >
+          📊 Exposure Desk
+        </button>
+        <button
+          id="manage-workers-tab"
+          className={`admin-tab ${tab === "manage" ? "active" : ""}`}
+          onClick={() => setTab("manage")}
+        >
+          👷 Manage Workers
+        </button>
+      </div>
+
+      {tab === "manage" ? (
+        <ManageWorkers session={session} />
+      ) : (
+        <>
+          {/* Workers table */}
+          <div className="card" style={{ marginTop: 20 }}>
+            <div className="card-head">
+              <h3>Workers — Latest Exposure Reading</h3>
+              <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+                Passive badge is the primary measurement. Click any row for full history.
+              </p>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Worker</th>
+                  <th>Department</th>
+                  <th>Shift</th>
+                  <th>Active Band</th>
+                  <th>Latest Dose</th>
+                  <th>Risk Band</th>
+                  <th>Confidence</th>
+                  <th>Scan Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {workers.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="muted">
+                      No workers registered yet. Use the "Manage Workers" tab to add workers.
+                    </td>
+                  </tr>
+                )}
             {workers.map((w) => {
               const s = w.latest_scan;
               const isHigh = s?.risk_band === "high";
@@ -576,6 +924,8 @@ function Dashboard({ session, onLogout }) {
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }
@@ -586,7 +936,8 @@ export function AdminPage() {
 
   useEffect(() => {
     if (!supabase) {
-      setSession(null); // no supabase — show login (demo bypass)
+      // Supabase not configured — do not auto-login, show not-configured message
+      setSession("not-configured");
       return;
     }
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -603,6 +954,27 @@ export function AdminPage() {
     return (
       <div className="shell" style={{ textAlign: "center", paddingTop: 80 }}>
         <p className="muted">Checking authentication…</p>
+      </div>
+    );
+  }
+
+  if (session === "not-configured") {
+    return (
+      <div className="login-shell">
+        <div className="login-card">
+          <div className="login-logo">H₂S-DOSAI</div>
+          <p className="login-tagline">Admin Dashboard</p>
+          <div className="banner warn" style={{ marginTop: 24 }}>
+            <strong>Auth not configured</strong><br />
+            Set <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code>{" "}
+            in your <code>.env</code> file, then restart the dev server.
+          </div>
+          <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>
+            Admin login requires a configured Supabase project. See{" "}
+            <a href="https://supabase.com" target="_blank" rel="noreferrer">supabase.com</a>{" "}
+            to create a free project.
+          </p>
+        </div>
       </div>
     );
   }

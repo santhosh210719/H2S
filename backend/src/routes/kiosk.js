@@ -2,6 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { store } from "../store/index.js";
 import { analyzeBadgeImage } from "../lib/mlClient.js";
+import { workerAuthMiddleware } from "../lib/auth.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -9,6 +10,9 @@ const upload = multer({
 });
 
 export const kioskRouter = Router();
+
+// All kiosk routes require a valid worker session token
+kioskRouter.use(workerAuthMiddleware);
 
 function fail(res, status, code, error) {
   return res.status(status).json({ ok: false, code, error });

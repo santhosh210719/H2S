@@ -7,81 +7,18 @@ function uid() {
   return crypto.randomUUID();
 }
 
-function seed() {
-  const demoWorkers = Array.from({ length: 50 }, (_, index) => {
-    const number = index + 1;
-    return {
-      worker_id: `WKR-${String(1000 + number).padStart(4, "0")}`,
-      name: `Demo Worker ${String(number).padStart(2, "0")}`,
-      department: ["CDU", "SRU", "Utilities", "Tank Farm"][index % 4],
-      shift: index % 2 === 0 ? "A" : "B",
-      created_at: nowIso(),
-    };
-  });
-
-  const demoWristbands = Array.from({ length: 51 }, (_, index) => 481 + index)
-    .filter((number) => number !== 499)
-    .map((number) => ({
-    wristband_qr: `WB-2026-${String(number).padStart(6, "0")}`,
-    batch_id: "BATCH-26-01",
-    status: "available",
-  }));
-
-  return {
-    workers: [
-      { ...demoWorkers[0], name: "Arun Kumar" },
-      { ...demoWorkers[1], name: "Priya Nair" },
-      { ...demoWorkers[2], name: "Rahul Shetty" },
-      ...demoWorkers.slice(3),
-    ],
-    wristbands: [
-      ...demoWristbands,
-      { wristband_qr: "WB-2026-000499", batch_id: "BATCH-25-12", status: "used" },
-    ],
-    bindings: [],
-    scans: [
-      {
-        id: "seed-scan-1",
-        wristband_qr: "WB-2026-000499",
-        worker_id: "WKR-1003",
-        timestamp: new Date(Date.now() - 3 * 3600_000).toISOString(),
-        image_url: null,
-        quality_status: "pass",
-        dose_ppm_h: 6.4,
-        confidence: 0.79,
-        risk_band: "high",
-      },
-      {
-        id: "seed-scan-2",
-        wristband_qr: "WB-2026-000499",
-        worker_id: "WKR-1003",
-        timestamp: new Date(Date.now() - 6 * 3600_000).toISOString(),
-        image_url: null,
-        quality_status: "pass",
-        dose_ppm_h: 2.1,
-        confidence: 0.83,
-        risk_band: "medium",
-      },
-      {
-        id: "seed-scan-3",
-        wristband_qr: "WB-2026-000481",
-        worker_id: "WKR-1001",
-        timestamp: new Date(Date.now() - 1 * 3600_000).toISOString(),
-        image_url: null,
-        quality_status: "pass",
-        dose_ppm_h: 0.5,
-        confidence: 0.91,
-        risk_band: "low",
-      },
-    ],
-    ambient: [],
-  };
-}
-
-const db = seed();
+// Empty store — populated only through admin onboarding (POST /api/admin/workers)
+// and real kiosk operations. No hardcoded demo data.
+const db = {
+  workers:  [],   // { worker_id, name, department, shift, pin_hash, active, created_at }
+  wristbands: [], // { wristband_qr, batch_id, status }
+  bindings: [],
+  scans:    [],
+  ambient:  [],
+};
 
 function worker(id) {
-  return db.workers.find((w) => w.worker_id === id);
+  return db.workers.find((w) => w.worker_id === id && w.active !== false);
 }
 function band(qr) {
   return db.wristbands.find((w) => w.wristband_qr === qr);
@@ -95,6 +32,43 @@ function openBindingByWorker(id) {
 
 export const memoryStore = {
   mode: "memory",
+
+  // ── Worker management ────────────────────────────────────────────────────────
+
+  async createWorker({ worker_id, name, department, shift, pin_hash }) {
+    if (db.workers.find((w) => w.worker_id === worker_id)) {
+      return { ok: false, status: 409, error: "Worker ID already exists." };
+    }
+    const w = { worker_id, name, department, shift, pin_hash, active: true, created_at: nowIso() };
+    db.workers.push(w);
+    const { pin_hash: _ph, ...safe } = w;
+    return { ok: true, worker: safe };
+  },
+
+  async verifyWorkerPin(worker_id, pin) {
+    const { default: bcrypt } = await import("bcrypt");
+    const w = db.workers.find((w) => w.worker_id === worker_id);
+    if (!w || !w.active) return false;        // don't reveal whether id exists
+    return bcrypt.compare(String(pin), w.pin_hash);
+  },
+
+  async deactivateWorker(worker_id) {
+    const w = db.workers.find((w) => w.worker_id === worker_id);
+    if (!w) return { ok: false, status: 404, error: "Worker not found." };
+    w.active = false;
+    return { ok: true };
+  },
+
+  // ── Wristband management ─────────────────────────────────────────────────────
+
+  async registerWristband({ wristband_qr, batch_id }) {
+    if (band(wristband_qr)) return { ok: false, status: 409, error: "Wristband already registered." };
+    const wb = { wristband_qr, batch_id: batch_id || "BATCH-UNSET", status: "available" };
+    db.wristbands.push(wb);
+    return { ok: true, wristband: wb };
+  },
+
+  // ── Shift operations ─────────────────────────────────────────────────────────
 
   async bindWristband({ worker_id, wristband_qr, kiosk_location }) {
     const w = worker(worker_id);
@@ -110,7 +84,7 @@ export const memoryStore = {
     }
     wb.status = "bound";
     const binding = {
-      id: crypto.randomUUID(),
+      id: uid(),
       wristband_qr,
       worker_id,
       shift_start: nowIso(),
@@ -118,7 +92,8 @@ export const memoryStore = {
       kiosk_location: kiosk_location || "KIOSK-MUSTER-01",
     };
     db.bindings.push(binding);
-    return { ok: true, binding, worker: w, wristband: wb };
+    const { pin_hash: _ph, ...safeWorker } = w;
+    return { ok: true, binding, worker: safeWorker, wristband: wb };
   },
 
   async closeShift({ wristband_qr }) {
@@ -138,7 +113,9 @@ export const memoryStore = {
     if (wb.status === "used") return { ok: false, status: 409, error: USED_MSG };
     const binding = openBindingByBand(wristband_qr);
     if (!binding) return { ok: false, status: 409, error: "Bind worker ID + wristband QR first." };
-    return { ok: true, wristband: wb, binding, worker: worker(binding.worker_id) };
+    const w = worker(binding.worker_id);
+    const { pin_hash: _ph, ...safeWorker } = w || {};
+    return { ok: true, wristband: wb, binding, worker: safeWorker };
   },
 
   async insertScan({ wristband_qr, imageBuffer, mime, filename, image_url, quality_status, dose_ppm_h, confidence, risk_band, kiosk_id }) {
@@ -195,26 +172,71 @@ export const memoryStore = {
     return { ok: true, latest, recent };
   },
 
-
   async listWorkers() {
-    return db.workers.map((w) => {
-      const binding = db.bindings.filter((b) => b.worker_id === w.worker_id).at(-1);
-      const latest = db.scans.find((s) => {
-        if (s.worker_id === w.worker_id) return true;
-        if (binding && s.wristband_qr === binding.wristband_qr) return true;
-        return false;
+    return db.workers
+      .filter((w) => w.active !== false)
+      .map((w) => {
+        const { pin_hash: _ph, ...safe } = w;
+        const binding = db.bindings.filter((b) => b.worker_id === w.worker_id).at(-1);
+        const latest = db.scans.find((s) => {
+          if (s.worker_id === w.worker_id) return true;
+          if (binding && s.wristband_qr === binding.wristband_qr) return true;
+          return false;
+        });
+        return { ...safe, latest_scan: latest || null, active_binding: openBindingByWorker(w.worker_id) || null };
       });
-      return { ...w, latest_scan: latest || null, active_binding: openBindingByWorker(w.worker_id) || null };
+  },
+
+  /** Returns ALL workers (active + inactive) without pin_hash — for admin management. */
+  async listAllWorkers() {
+    return db.workers.map((w) => {
+      const { pin_hash: _ph, ...safe } = w;
+      return safe;
     });
   },
 
-  async workerHistory(worker_id) {
-    const w = worker(worker_id);
+  async updateWorkerPin(worker_id, pin_hash) {
+    const w = db.workers.find((wk) => wk.worker_id === worker_id);
     if (!w) return { ok: false, status: 404, error: "Worker not found." };
+    w.pin_hash = pin_hash;
+    return { ok: true };
+  },
+
+  async activateWorker(worker_id) {
+    const w = db.workers.find((wk) => wk.worker_id === worker_id);
+    if (!w) return { ok: false, status: 404, error: "Worker not found." };
+    w.active = true;
+    return { ok: true };
+  },
+
+  /** Worker self-lookup: returns profile + current shift + recent scans. */
+  async getWorkerProfile(worker_id) {
+    const w = db.workers.find((wk) => wk.worker_id === worker_id && wk.active !== false);
+    if (!w) return { ok: false, status: 404, error: "Worker not found." };
+    const { pin_hash: _ph, ...safe } = w;
+    const activeBinding = openBindingByWorker(worker_id);
+    const qrs = db.bindings.filter((b) => b.worker_id === worker_id).map((b) => b.wristband_qr);
+    const scans = db.scans
+      .filter((s) => s.worker_id === worker_id || qrs.includes(s.wristband_qr))
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 10);
+    return {
+      ok: true,
+      worker: safe,
+      on_shift: !!activeBinding,
+      active_wristband: activeBinding?.wristband_qr || null,
+      recent_scans: scans,
+    };
+  },
+
+  async workerHistory(worker_id) {
+    const w = db.workers.find((wk) => wk.worker_id === worker_id);
+    if (!w) return { ok: false, status: 404, error: "Worker not found." };
+    const { pin_hash: _ph, ...safeWorker } = w;
     const qrs = db.bindings.filter((b) => b.worker_id === worker_id).map((b) => b.wristband_qr);
     const scans = db.scans
       .filter((s) => s.worker_id === worker_id || qrs.includes(s.wristband_qr))
       .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    return { ok: true, worker: w, scans, bindings: db.bindings.filter((b) => b.worker_id === worker_id) };
+    return { ok: true, worker: safeWorker, scans, bindings: db.bindings.filter((b) => b.worker_id === worker_id) };
   },
 };

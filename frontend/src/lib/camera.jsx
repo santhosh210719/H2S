@@ -33,96 +33,131 @@ class QrErrorBoundary extends Component {
   }
 }
 
+// ── Unique ID counter so multiple QrScanner instances never share the same DOM id ──
+let _qrCounter = 0;
+
 // ── QR Scanner ────────────────────────────────────────────────────────────────
 function QrScannerInner({ onDecode, active, demoCodes }) {
-  const regionId = "h2s-qr-region";
+  // Stable unique region id — created once per component mount
+  const regionId = useRef(`h2s-qr-region-${++_qrCounter}`).current;
   const inst = useRef(null);
   const fileInputRef = useRef(null);
+  const [camState, setCamState] = useState("idle"); // idle | starting | running | error
   const [err, setErr] = useState("");
   const [scanningFile, setScanningFile] = useState(false);
 
   useEffect(() => {
     if (!active) return undefined;
     let cancelled = false;
+    setCamState("starting");
+    setErr("");
+
     const html5 = new Html5Qrcode(regionId);
     inst.current = html5;
+
     html5
       .start(
         { facingMode: "environment" },
-        { fps: 8, qrbox: { width: 240, height: 240 } },
+        { fps: 10, qrbox: { width: 240, height: 240 } },
         (text) => {
-          if (!cancelled) onDecode(text);
+          if (!cancelled) {
+            // Stop camera after a successful decode to avoid duplicate fires
+            html5.stop().catch(() => {});
+            onDecode(text);
+          }
         },
-        () => {}
+        () => {} // per-frame failure — ignore
       )
+      .then(() => { if (!cancelled) setCamState("running"); })
       .catch((e) => {
-        const msg = e?.message || "";
+        if (cancelled) return;
+        const msg = String(e?.message || e || "");
         if (msg.includes("Permission") || msg.includes("NotAllowed")) {
-          setErr("Camera permission denied by browser.");
-        } else if (msg.includes("NotFound") || msg.includes("no camera")) {
-          setErr("No camera hardware detected.");
+          setErr(
+            "Camera permission denied. Click the 🔒 lock icon in your browser address bar → " +
+            "set Camera to Allow — then click ▲ Hide camera / ▼ Use QR camera to retry."
+          );
+        } else if (msg.includes("NotFound") || msg.includes("no camera") || msg.includes("DevicesNotFound")) {
+          setErr("No camera hardware found on this device.");
+        } else if (msg.includes("NotReadable") || msg.includes("TrackStart")) {
+          setErr("Camera is already in use by another app. Close it and retry.");
         } else {
-          setErr("Camera feed unavailable.");
+          setErr(`Camera unavailable: ${msg || "unknown error"}.`);
         }
+        setCamState("error");
       });
+
     return () => {
       cancelled = true;
       html5.stop().catch(() => {});
       html5.clear().catch(() => {});
     };
-  }, [active, onDecode]);
+  }, [active, regionId, onDecode]);
 
-  // Decode QR code from uploaded image file
+  // Decode QR code from an uploaded image file
   async function handleFileScan(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     setScanningFile(true);
     setErr("");
     try {
-      const html5 = inst.current || new Html5Qrcode(regionId);
-      const text = await html5.scanFile(file, true);
+      // scanFile works even if the live camera failed — use a fresh instance
+      const scanner = new Html5Qrcode(`${regionId}-filescan`);
+      const text = await scanner.scanFile(file, true);
+      scanner.clear().catch(() => {});
       onDecode(text);
     } catch {
-      setErr("Could not detect a valid QR code in the uploaded image.");
+      setErr("Could not detect a valid QR code in the uploaded image. Try a clearer photo.");
     } finally {
       setScanningFile(false);
     }
   }
 
+  const showFallback = camState === "error" || err;
+
   return (
     <div style={{ marginTop: 8 }}>
-      <div id={regionId} className="qr-box" />
+      {/* Live camera viewfinder — always rendered so Html5Qrcode can attach to it */}
+      <div id={regionId} className="qr-box" style={{ display: showFallback ? "none" : undefined }} />
 
-      {err && (
+      {camState === "starting" && !err && (
+        <div className="camera-requesting" style={{ minHeight: 90 }}>
+          <div className="camera-requesting-spinner" />
+          <p>Starting QR camera…</p>
+          <p className="muted" style={{ fontSize: 12 }}>Click "Allow" if your browser asks for camera permission.</p>
+        </div>
+      )}
+
+      {/* Always show quick-select demo buttons so user can proceed immediately */}
+      {demoCodes && demoCodes.length > 0 && (
+        <div style={{ margin: "10px 0 4px" }}>
+          <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 6px", textTransform: "uppercase", fontWeight: 700 }}>
+            Quick Select Demo QR:
+          </p>
+          <div className="row" style={{ gap: 6 }}>
+            {demoCodes.map((code) => (
+              <button
+                key={code}
+                className="btn primary"
+                style={{ fontSize: 12, padding: "5px 12px" }}
+                onClick={() => onDecode(code)}
+              >
+                {code}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showFallback && (
         <div className="camera-fallback" style={{ marginTop: 8, padding: "16px 14px" }}>
-          <p className="camera-fallback-title" style={{ fontSize: 14 }}>⚠️ {err}</p>
+          <p className="camera-fallback-title" style={{ fontSize: 14 }}>⚠️ {err || "Camera unavailable"}</p>
           <p className="camera-fallback-msg" style={{ margin: "4px 0 12px", fontSize: 12 }}>
-            You can type the code directly, pick a demo QR, or upload a QR image file:
+            Type the code above, click a demo QR button, or upload a QR image file:
           </p>
 
-          {/* Quick select demo codes */}
-          {demoCodes && demoCodes.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 6px", textTransform: "uppercase", fontWeight: 700 }}>
-                Quick Select Demo QR:
-              </p>
-              <div className="row" style={{ gap: 6, justifyContent: "center" }}>
-                {demoCodes.map((code) => (
-                  <button
-                    key={code}
-                    className="btn primary"
-                    style={{ fontSize: 12, padding: "4px 10px" }}
-                    onClick={() => onDecode(code)}
-                  >
-                    {code}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* File Upload QR scanner fallback */}
-          <div style={{ borderTop: "1px dashed var(--line)", paddingTop: 10, marginTop: 10 }}>
+          {/* File Upload QR fallback */}
+          <div style={{ borderTop: "1px dashed var(--line)", paddingTop: 10 }}>
             <input
               type="file"
               ref={fileInputRef}
@@ -136,7 +171,7 @@ function QrScannerInner({ onDecode, active, demoCodes }) {
               onClick={() => fileInputRef.current?.click()}
               disabled={scanningFile}
             >
-              📁 {scanningFile ? "Scanning image file…" : "Upload QR image file"}
+              📁 {scanningFile ? "Scanning image…" : "Upload QR image file"}
             </button>
           </div>
         </div>
@@ -342,7 +377,8 @@ export function makeSyntheticBadge(relDark) {
   ctx.fillRect(40, 50, 280, 250);
   ctx.fillStyle = "#f7f5f0";
   ctx.fillRect(360, 40, 240, 70);
-  const bands = ["#f4efe6", "#e6d3b0", "#c9a227", "#6b5a2a", "#1a1612"];
+  // Official H2S-DOSAI reference chart colors
+  const bands = ["#F0E9E2", "#DCC08A", "#B8902F", "#5C4A1E", "#231A24"];
   bands.forEach((c, i) => {
     ctx.fillStyle = c;
     ctx.fillRect(360, 130 + i * 38, 240, 34);
