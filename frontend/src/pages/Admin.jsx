@@ -1103,7 +1103,174 @@ function Dashboard({ session, onLogout }) {
           </div>
         )}
       </div>
+
+      {/* External Live Sensor Feed (h2s_datas table) */}
+      <ExternalSensorPanel />
         </>
+      )}
+    </div>
+  );
+}
+
+// ── External Live Sensor Feed (h2s_datas) ─────────────────────────────────────
+function ExternalSensorPanel() {
+  const [feed, setFeed] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  async function loadFeed() {
+    try {
+      const res = await fetch(apiUrl("/api/ambient/external-latest?limit=30"), { cache: "no-store" });
+      const data = await res.json();
+      setFeed(data);
+    } catch {
+      setFeed({ ok: false, error: "Network error loading external sensor feed" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadFeed();
+    const interval = setInterval(loadFeed, 1000); // 1s polling matching source hardware
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="card" style={{ marginTop: 20 }}>
+        <h3>Live Sensor Feed — HYD Stations</h3>
+        <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>Loading external sensor feed…</p>
+      </div>
+    );
+  }
+
+  if (!feed || !feed.ok) {
+    return (
+      <div className="card" style={{ marginTop: 20 }}>
+        <h3>Live Sensor Feed — HYD Stations</h3>
+        <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
+          External Supabase telemetry stream (<code>h2s_datas</code>)
+        </p>
+        <div style={{ marginTop: 12, padding: "12px 14px", background: "var(--panel-2)", borderRadius: "var(--r-sm)", fontSize: 13 }}>
+          🔌 External sensor not connected · Set <code>SENSOR_SUPABASE_URL</code> and <code>SENSOR_SUPABASE_ANON_KEY</code> in <code>.env</code> to activate live hardware feed.
+        </div>
+      </div>
+    );
+  }
+
+  const latest = feed.latest;
+  const recent = feed.recent || [];
+  const now = Date.now();
+  const latestTs = latest ? new Date(latest.timestamp).getTime() : 0;
+  const isOffline = !latest || (now - latestTs > 15000);
+
+  function statusBadge(st, offline) {
+    if (offline) return <span className="pill muted">OFFLINE</span>;
+    if (st === "CRITICAL") return <span className="pill very_high">CRITICAL</span>;
+    if (st === "WARNING") return <span className="pill high">WARNING</span>;
+    if (st === "CAUTION") return <span className="pill low">CAUTION</span>;
+    return <span className="pill fresh">SAFE</span>;
+  }
+
+  const hasSlotIds = recent.some((r) => r.slot_id);
+  const slots = ["HYD001", "HYD002", "HYD003", "HYD004"];
+
+  return (
+    <div className="card" style={{ marginTop: 20, borderColor: isOffline ? "var(--line)" : latest?.risk_status === "CRITICAL" ? "var(--danger)" : "var(--line)" }}>
+      <div className="ambient-header" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <h3>📡 Live Sensor Feed — HYD Stations</h3>
+          <p className="muted" style={{ margin: "2px 0 0", fontSize: 13 }}>
+            External hardware telemetry feed · table <code>h2s_datas</code> · 1s poll rate
+          </p>
+        </div>
+        <div className="row" style={{ alignItems: "center", gap: 10 }}>
+          {isOffline ? (
+            <span className="pill muted" style={{ fontSize: 11 }}>
+              ⚠️ SENSOR OFFLINE ({">"}15s stale)
+            </span>
+          ) : (
+            <span className="pill fresh" style={{ fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#3dba7a", display: "inline-block" }} />
+              LIVE 1s FEED
+            </span>
+          )}
+          {latest && statusBadge(latest.risk_status, isOffline)}
+        </div>
+      </div>
+
+      {/* Main summary tiles */}
+      <div className="ambient-grid" style={{ marginTop: 16 }}>
+        <div className="ambient-tile">
+          <div className="ambient-label">Estimated H₂S</div>
+          <div className="ambient-value" style={{ color: isOffline ? "var(--muted)" : latest?.risk_status === "CRITICAL" ? "var(--danger)" : "var(--ink)" }}>
+            {isOffline ? "— ppm" : `${latest?.ambient_h2s_ppm ?? 0} ppm`}
+          </div>
+          <div className="ambient-sub">Calibrated from ADC</div>
+        </div>
+
+        <div className="ambient-tile">
+          <div className="ambient-label">Raw ADC Sensor</div>
+          <div className="ambient-value" style={{ fontFamily: "monospace" }}>
+            {isOffline ? "—" : (latest?.adc_raw ?? "—")}
+          </div>
+          <div className="ambient-sub">Raw hardware reading</div>
+        </div>
+
+        <div className="ambient-tile">
+          <div className="ambient-label">Temp / Humidity</div>
+          <div className="ambient-value" style={{ fontSize: 15 }}>
+            {isOffline ? "—" : `${latest?.temperature_c ?? "—"} °C / ${latest?.humidity_percent ?? "—"} %`}
+          </div>
+          {latest?.pressure != null && (
+            <div className="ambient-sub">{latest.pressure} hPa</div>
+          )}
+        </div>
+
+        <div className="ambient-tile">
+          <div className="ambient-label">Last Reading</div>
+          <div className="ambient-value" style={{ fontSize: 14 }}>
+            {isOffline ? <span className="warn" style={{ fontSize: 13 }}>Sensor offline</span> : fmt(latest?.timestamp)}
+          </div>
+          <div className="ambient-sub">{isOffline ? "Last seen >15s ago" : "Real-time feed"}</div>
+        </div>
+      </div>
+
+      {/* 4-Slot Breakdown Cards (HYD001–HYD004) if slot_id is present */}
+      {hasSlotIds && (
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
+          <h4 style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>Hardware Station Slots (HYD001 – HYD004)</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+            {slots.map((slotId) => {
+              const slotRow = recent.find((r) => r.slot_id === slotId);
+              const slotTs = slotRow ? new Date(slotRow.timestamp).getTime() : 0;
+              const slotStale = !slotRow || (now - slotTs > 15000);
+              return (
+                <div key={slotId} className="card" style={{ padding: 14, background: "var(--panel-2)", border: "1px solid var(--line)" }}>
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <strong style={{ fontFamily: "monospace", fontSize: 13 }}>{slotId}</strong>
+                    {statusBadge(slotRow?.risk_status, slotStale)}
+                  </div>
+                  {slotRow && !slotStale ? (
+                    <div style={{ fontSize: 12 }}>
+                      <p style={{ margin: "4px 0", fontSize: 14, fontWeight: 700 }}>
+                        {slotRow.ambient_h2s_ppm} ppm <small className="muted" style={{ fontWeight: 400 }}>(ADC {slotRow.adc_raw})</small>
+                      </p>
+                      <p className="muted" style={{ margin: 0, fontSize: 11 }}>
+                        {slotRow.temperature_c ?? "—"} °C · {slotRow.humidity_percent ?? "—"} %
+                      </p>
+                      <p className="muted" style={{ margin: "4px 0 0", fontSize: 10 }}>{fmt(slotRow.timestamp)}</p>
+                    </div>
+                  ) : (
+                    <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
+                      {slotRow && slotStale ? "⚠️ Station offline" : "Not reporting yet"}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );

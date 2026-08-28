@@ -9,6 +9,7 @@ import { authRouter } from "./routes/auth.js";
 import { store } from "./store/index.js";
 import { analyzeBadgeImage } from "./lib/mlClient.js";
 import { workerAuthMiddleware } from "./lib/auth.js";
+import { isSensorConfigured, sensorSupabaseClient, adcToPpm } from "./lib/sensorSupabase.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
@@ -137,6 +138,49 @@ app.get("/api/ambient/latest", async (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query.limit || 30)));
   const result = await store.getLatestAmbient(limit);
   return res.json(result);
+});
+
+/**
+ * GET /api/ambient/external-latest?limit=30
+ * Returns live data from friend's h2s_datas Supabase table with ADC -> ppm calibration.
+ */
+app.get("/api/ambient/external-latest", async (req, res) => {
+  if (!isSensorConfigured || !sensorSupabaseClient) {
+    return res.json({ ok: false, error: "External sensor not configured" });
+  }
+
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit || 30)));
+
+  try {
+    const { data, error } = await sensorSupabaseClient
+      .from("h2s_datas")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      return res.json({ ok: false, error: error.message });
+    }
+
+    const recent = (data || []).map((row) => {
+      const cal = adcToPpm(row.adc);
+      return {
+        ambient_h2s_ppm: cal.ppm,
+        temperature_c: row.temp != null ? Number(row.temp) : null,
+        humidity_percent: row.humidity != null ? Number(row.humidity) : null,
+        pressure: row.pressure != null ? Number(row.pressure) : null,
+        slot_id: row.slot_id ? String(row.slot_id).trim() : null,
+        adc_raw: cal.adc,
+        risk_status: cal.status,
+        timestamp: row.created_at,
+      };
+    });
+
+    const latest = recent.length ? recent[0] : null;
+    return res.json({ ok: true, latest, recent });
+  } catch (err) {
+    return res.json({ ok: false, error: err.message || "Failed to query external sensor" });
+  }
 });
 
 
