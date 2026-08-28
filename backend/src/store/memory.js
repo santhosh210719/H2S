@@ -181,10 +181,11 @@ export const memoryStore = {
       .filter((w) => w.active !== false)
       .map((w) => {
         const { pin_hash: _ph, ...safe } = w;
-        const binding = db.bindings.filter((b) => b.worker_id === w.worker_id).at(-1);
+        const workerBindings = db.bindings.filter((b) => b.worker_id === w.worker_id);
+        const workerQrs = workerBindings.map((b) => b.wristband_qr);
         const latest = db.scans.find((s) => {
           if (s.worker_id === w.worker_id) return true;
-          if (binding && s.wristband_qr === binding.wristband_qr) return true;
+          if (workerQrs.includes(s.wristband_qr)) return true;
           return false;
         });
         return { ...safe, latest_scan: latest || null, active_binding: openBindingByWorker(w.worker_id) || null };

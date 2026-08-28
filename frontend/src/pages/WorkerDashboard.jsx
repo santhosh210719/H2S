@@ -27,6 +27,7 @@ export function WorkerDashboardPage() {
     if (!token) { navigate("/worker-login", { replace: true }); return; }
     fetch(apiUrl("/api/auth/worker/me"), {
       headers: { "Authorization": `Bearer ${token}` },
+      cache: "no-store",
     })
       .then((r) => r.json())
       .then((d) => {

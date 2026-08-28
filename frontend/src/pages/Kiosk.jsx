@@ -352,12 +352,15 @@ function ScreenD({ result, workerName, bandQr, onScanAgain, onCloseShift }) {
         </div>
       )}
 
-      <div className="row" style={{ marginTop: 16, justifyContent: "center" }}>
+      <div className="row" style={{ marginTop: 16, justifyContent: "center", flexWrap: "wrap", gap: 10 }}>
         <button id="scan-again-btn" className="btn" onClick={onScanAgain}>
           📸 Scan again
         </button>
+        <button id="finish-btn" className="btn primary" onClick={() => navigate("/worker-dashboard")}>
+          ✅ Return to Dashboard (Shift remains open)
+        </button>
         <button id="close-shift-btn" className="btn danger" disabled={closeBusy} onClick={handleClose}>
-          {closeBusy ? "Closing…" : "🔒 Close shift"}
+          {closeBusy ? "Closing…" : "🔒 Close shift & Lock band"}
         </button>
       </div>
     </div>

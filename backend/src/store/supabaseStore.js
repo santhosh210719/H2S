@@ -159,7 +159,11 @@ export const supabaseStore = {
       risk_band: isPass ? (risk_band ?? null) : null,
     };
     const { data: scan, error } = await supabaseAdmin.from("scan_logs").insert(row).select("*").single();
-    if (error) return { ok: false, status: 500, error: error.message };
+    if (error) {
+      console.error("[supabaseStore] insertScan DB error:", error.message);
+      return { ok: false, status: 500, error: error.message };
+    }
+    console.log(`[supabaseStore] Scan logged successfully: id=${scan.id}, qr=${wristband_qr}, dose=${dose_ppm_h}, risk=${risk_band}`);
 
     if (!isPass) {
       return {
@@ -181,13 +185,14 @@ export const supabaseStore = {
       .eq("active", true)
       .order("worker_id");
     if (error) throw error;
-    const { data: bindings } = await supabaseAdmin.from("shift_bindings").select("*").is("shift_end", null);
+    const { data: bindings } = await supabaseAdmin.from("shift_bindings").select("*");
     const { data: scans } = await supabaseAdmin.from("scan_logs").select("*").order("timestamp", { ascending: false }).limit(200);
-    const openByWorker = Object.fromEntries((bindings || []).map((b) => [b.worker_id, b]));
     return (workers || []).map((w) => {
-      const open = openByWorker[w.worker_id];
-      const latest = (scans || []).find((s) => s.wristband_qr === open?.wristband_qr) || null;
-      return { ...w, latest_scan: latest, active_binding: open || null };
+      const workerBindings = (bindings || []).filter((b) => b.worker_id === w.worker_id);
+      const workerQrs = workerBindings.map((b) => b.wristband_qr);
+      const active = workerBindings.find((b) => !b.shift_end) || null;
+      const latest = (scans || []).find((s) => workerQrs.includes(s.wristband_qr)) || null;
+      return { ...w, latest_scan: latest, active_binding: active };
     });
   },
 

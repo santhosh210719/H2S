@@ -95,7 +95,7 @@ function WorkerHistory({ worker, onBack }) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(apiUrl(`/api/workers/${worker.worker_id}/history`))
+    fetch(apiUrl(`/api/workers/${worker.worker_id}/history`), { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         if (d.ok) setData(d);
@@ -318,7 +318,7 @@ function ManageWorkers({ session }) {
   async function loadWorkers() {
     try {
       const headers = await authHeaders();
-      const res = await fetch(apiUrl("/api/admin/workers"), { headers });
+      const res = await fetch(apiUrl("/api/admin/workers"), { headers, cache: "no-store" });
       const data = await res.json();
       if (data.ok) setWorkers(data.workers || []);
       else setErr(data.error || "Failed to load workers.");
@@ -330,7 +330,7 @@ function ManageWorkers({ session }) {
   async function loadNextId() {
     try {
       const headers = await authHeaders();
-      const res = await fetch(apiUrl("/api/admin/workers/next-id"), { headers });
+      const res = await fetch(apiUrl("/api/admin/workers/next-id"), { headers, cache: "no-store" });
       const data = await res.json();
       if (data.ok) {
         setNextId(data.next_id);
@@ -637,7 +637,7 @@ function ManageWristbands({ session }) {
   async function loadWristbands() {
     try {
       const headers = await authHeaders();
-      const res = await fetch(apiUrl("/api/admin/wristbands"), { headers });
+      const res = await fetch(apiUrl("/api/admin/wristbands"), { headers, cache: "no-store" });
       const data = await res.json();
       if (data.ok) setWristbands(data.wristbands || []);
       else setErr(data.error || "Failed to load wristbands.");
@@ -794,7 +794,7 @@ function Dashboard({ session, onLogout }) {
 
   async function loadWorkers() {
     try {
-      const res = await fetch(apiUrl("/api/workers"));
+      const res = await fetch(apiUrl("/api/workers"), { cache: "no-store" });
       const data = await res.json();
       if (data.ok) {
         setWorkers(data.workers || []);

@@ -82,14 +82,67 @@ export async function extractColorFeatures(buffer) {
   };
 }
 
-/** Explainable fallback if Python/XGBoost is offline: darkness -> ppm·h (same synthetic mapping). */
+/**
+ * Official H2S-DOSAI Reference Swatches (RGB & CIELAB):
+ *   Fresh:     #F0E9E2 -> RGB(240, 233, 226) -> L: 92.5, a: 1.2, b:  4.5 -> dose: 0.0 ppm·h (Fresh)
+ *   Low:       #DCC08A -> RGB(220, 192, 138) -> L: 78.6, a: 3.5, b: 31.8 -> dose: 0.8 ppm·h (Low)
+ *   Medium:    #B8902F -> RGB(184, 144,  47) -> L: 61.2, a: 7.8, b: 54.2 -> dose: 3.0 ppm·h (Medium)
+ *   High:      #5C4A1E -> RGB( 92,  74,  30) -> L: 33.1, a: 3.2, b: 28.5 -> dose: 12.5 ppm·h (High)
+ *   Very High: #231A24 -> RGB( 35,  26,  36) -> L: 11.2, a: 5.8, b: -4.8 -> dose: 25.0 ppm·h (Very High)
+ */
+export const COLOR_REFERENCE_SWATCHES = [
+  { name: "fresh",     hex: "#F0E9E2", r: 240, g: 233, b: 226, L: 92.5, a: 1.2,  b_lab: 4.5,  targetDose: 0.0 },
+  { name: "low",       hex: "#DCC08A", r: 220, g: 192, b: 138, L: 78.6, a: 3.5,  b_lab: 31.8, targetDose: 0.8 },
+  { name: "medium",    hex: "#B8902F", r: 184, g: 144, b: 47,  L: 61.2, a: 7.8,  b_lab: 54.2, targetDose: 3.0 },
+  { name: "high",      hex: "#5C4A1E", r: 92,  g: 74,  b: 30,  L: 33.1, a: 3.2,  b_lab: 28.5, targetDose: 12.5 },
+  { name: "very_high", hex: "#231A24", r: 35,  g: 26,  b: 36,  L: 11.2, a: 5.8,  b_lab: -4.8, targetDose: 25.0 },
+];
+
+/** Explainable fallback if Python/XGBoost is offline: color-hue CIELAB classification -> ppm·h. */
 export function heuristicDose(features) {
-  const d = Math.max(0, Math.min(1, features.rel_dark ?? features.darkness ?? 0));
-  const dose = Math.min(50, (Math.exp(d * 3.6) - 1) * 3.4);
-  const confidence = 0.55 + 0.25 * (1 - Math.abs(d - 0.5) * 0.4);
+  let L = features.L;
+  let a = features.a;
+  let b_lab = features.b;
+
+  if (L == null || a == null || b_lab == null) {
+    const pr = features.patch_r ?? 200;
+    const pg = features.patch_g ?? 200;
+    const pb = features.patch_b ?? 200;
+    const lab = rgbToLabApprox({ r: pr, g: pg, b: pb });
+    L = lab.L;
+    a = lab.a;
+    b_lab = lab.b;
+  }
+
+  // Calculate weighted Lab distance to each reference swatch (chromatic weight = 1.5)
+  const distances = COLOR_REFERENCE_SWATCHES.map((swatch) => {
+    const dL = L - swatch.L;
+    const da = a - swatch.a;
+    const db = b_lab - swatch.b_lab;
+    const dist = Math.sqrt(dL * dL + 1.5 * da * da + 1.5 * db * db);
+    return { ...swatch, dist };
+  });
+
+  // Find nearest swatch
+  distances.sort((d1, d2) => d1.dist - d2.dist);
+  const nearest = distances[0];
+  const second = distances[1];
+
+  // Interpolate dose between nearest two swatches
+  const totalWeight = (1 / Math.max(0.1, nearest.dist)) + (1 / Math.max(0.1, second.dist));
+  const w1 = (1 / Math.max(0.1, nearest.dist)) / totalWeight;
+  const w2 = (1 / Math.max(0.1, second.dist)) / totalWeight;
+  let interpolatedDose = w1 * nearest.targetDose + w2 * second.targetDose;
+  if (nearest.name === "fresh" && nearest.dist < 8) {
+    interpolatedDose = 0.0;
+  }
+
+  const confidence = Math.max(0.65, Math.min(0.92, 0.95 - nearest.dist * 0.005));
+
   return {
-    dose_ppm_h: Number(dose.toFixed(3)),
-    confidence: Number(Math.min(0.85, confidence).toFixed(3)),
-    engine: "heuristic-fallback",
+    dose_ppm_h: Number(interpolatedDose.toFixed(3)),
+    confidence: Number(confidence.toFixed(3)),
+    classified_band: nearest.name,
+    engine: "heuristic-color-classifier",
   };
 }
