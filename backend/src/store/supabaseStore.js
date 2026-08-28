@@ -1,8 +1,65 @@
 import { supabaseAdmin, STORAGE_BUCKET } from "../lib/supabase.js";
 import { USED_MSG } from "../lib/doseStub.js";
+import { comparePin } from "../lib/auth.js";
 
 export const supabaseStore = {
   mode: "supabase",
+
+  // ── Worker management ──────────────────────────────────────────────────────
+
+  async createWorker({ worker_id, name, department, shift, pin_hash }) {
+    const { data, error } = await supabaseAdmin
+      .from("workers")
+      .insert({ worker_id, name, department, shift, pin_hash, active: true })
+      .select("worker_id, name, department, shift, active, created_at")
+      .single();
+    if (error) {
+      if (error.code === "23505") return { ok: false, status: 409, error: "Worker ID already exists." };
+      return { ok: false, status: 500, error: error.message };
+    }
+    return { ok: true, worker: data };
+  },
+
+  async verifyWorkerPin(worker_id, pin) {
+    const { data: w } = await supabaseAdmin
+      .from("workers")
+      .select("pin_hash, active")
+      .eq("worker_id", worker_id)
+      .maybeSingle();
+    if (!w || !w.active) return false;   // don't leak whether worker_id exists
+    return comparePin(pin, w.pin_hash);
+  },
+
+  async deactivateWorker(worker_id) {
+    const { error } = await supabaseAdmin
+      .from("workers")
+      .update({ active: false })
+      .eq("worker_id", worker_id);
+    if (error) return { ok: false, status: 500, error: error.message };
+    return { ok: true };
+  },
+
+  async registerWristband({ wristband_qr, batch_id }) {
+    const { data, error } = await supabaseAdmin
+      .from("wristbands")
+      .insert({ wristband_qr, batch_id: batch_id || "BATCH-UNSET", status: "available" })
+      .select("*")
+      .single();
+    if (error) {
+      if (error.code === "23505") return { ok: false, status: 409, error: "Wristband already registered." };
+      return { ok: false, status: 500, error: error.message };
+    }
+    return { ok: true, wristband: data };
+  },
+
+  async listWristbands() {
+    const { data, error } = await supabaseAdmin
+      .from("wristbands")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return data || [];
+  },
 
   async bindWristband({ worker_id, wristband_qr, kiosk_location }) {
     const { data: w } = await supabaseAdmin.from("workers").select("*").eq("worker_id", worker_id).maybeSingle();
@@ -102,7 +159,11 @@ export const supabaseStore = {
       risk_band: isPass ? (risk_band ?? null) : null,
     };
     const { data: scan, error } = await supabaseAdmin.from("scan_logs").insert(row).select("*").single();
-    if (error) return { ok: false, status: 500, error: error.message };
+    if (error) {
+      console.error("[supabaseStore] insertScan DB error:", error.message);
+      return { ok: false, status: 500, error: error.message };
+    }
+    console.log(`[supabaseStore] Scan logged successfully: id=${scan.id}, qr=${wristband_qr}, dose=${dose_ppm_h}, risk=${risk_band}`);
 
     if (!isPass) {
       return {
@@ -118,16 +179,88 @@ export const supabaseStore = {
   },
 
   async listWorkers() {
-    const { data: workers, error } = await supabaseAdmin.from("workers").select("*").order("worker_id");
+    const { data: workers, error } = await supabaseAdmin
+      .from("workers")
+      .select("worker_id, name, department, shift, active, created_at")
+      .eq("active", true)
+      .order("worker_id");
     if (error) throw error;
-    const { data: bindings } = await supabaseAdmin.from("shift_bindings").select("*").is("shift_end", null);
+    const { data: bindings } = await supabaseAdmin.from("shift_bindings").select("*");
     const { data: scans } = await supabaseAdmin.from("scan_logs").select("*").order("timestamp", { ascending: false }).limit(200);
-    const openByWorker = Object.fromEntries((bindings || []).map((b) => [b.worker_id, b]));
     return (workers || []).map((w) => {
-      const open = openByWorker[w.worker_id];
-      const latest = (scans || []).find((s) => s.wristband_qr === open?.wristband_qr) || null;
-      return { ...w, latest_scan: latest, active_binding: open || null };
+      const workerBindings = (bindings || []).filter((b) => b.worker_id === w.worker_id);
+      const workerQrs = workerBindings.map((b) => b.wristband_qr);
+      const active = workerBindings.find((b) => !b.shift_end) || null;
+      const latest = (scans || []).find((s) => workerQrs.includes(s.wristband_qr)) || null;
+      return { ...w, latest_scan: latest, active_binding: active };
     });
+  },
+
+  /** All workers (active + inactive) for admin management table. */
+  async listAllWorkers() {
+    const { data, error } = await supabaseAdmin
+      .from("workers")
+      .select("worker_id, name, department, shift, active, created_at")
+      .order("worker_id");
+    if (error) throw error;
+    return data || [];
+  },
+
+  async updateWorkerPin(worker_id, pin_hash) {
+    const { error } = await supabaseAdmin
+      .from("workers")
+      .update({ pin_hash })
+      .eq("worker_id", worker_id);
+    if (error) return { ok: false, status: 500, error: error.message };
+    return { ok: true };
+  },
+
+  async activateWorker(worker_id) {
+    const { error } = await supabaseAdmin
+      .from("workers")
+      .update({ active: true })
+      .eq("worker_id", worker_id);
+    if (error) return { ok: false, status: 500, error: error.message };
+    return { ok: true };
+  },
+
+  /** Worker self-lookup: profile + current shift + recent scans. */
+  async getWorkerProfile(worker_id) {
+    const { data: w } = await supabaseAdmin
+      .from("workers")
+      .select("worker_id, name, department, shift, active, created_at")
+      .eq("worker_id", worker_id)
+      .eq("active", true)
+      .maybeSingle();
+    if (!w) return { ok: false, status: 404, error: "Worker not found." };
+    const { data: openBinding } = await supabaseAdmin
+      .from("shift_bindings")
+      .select("*")
+      .eq("worker_id", worker_id)
+      .is("shift_end", null)
+      .maybeSingle();
+    const { data: bindings } = await supabaseAdmin
+      .from("shift_bindings")
+      .select("wristband_qr")
+      .eq("worker_id", worker_id);
+    const qrs = (bindings || []).map((b) => b.wristband_qr);
+    let scans = [];
+    if (qrs.length) {
+      const { data: scanData } = await supabaseAdmin
+        .from("scan_logs")
+        .select("*")
+        .in("wristband_qr", qrs)
+        .order("timestamp", { ascending: false })
+        .limit(10);
+      scans = scanData || [];
+    }
+    return {
+      ok: true,
+      worker: w,
+      on_shift: !!openBinding,
+      active_wristband: openBinding?.wristband_qr || null,
+      recent_scans: scans,
+    };
   },
 
   async workerHistory(worker_id) {
@@ -169,4 +302,3 @@ export const supabaseStore = {
     return { ok: true, latest, recent };
   },
 };
-

@@ -1,18 +1,15 @@
-import dotenv from "dotenv";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, "../../.env") });
-dotenv.config();
+import "./env.js";
 
 import express from "express";
 import cors from "cors";
 import multer from "multer";
 import { kioskRouter } from "./routes/kiosk.js";
 import { adminRouter } from "./routes/admin.js";
+import { authRouter } from "./routes/auth.js";
 import { store } from "./store/index.js";
 import { analyzeBadgeImage } from "./lib/mlClient.js";
+import { workerAuthMiddleware } from "./lib/auth.js";
+import { isSensorConfigured, sensorSupabaseClient, adcToPpm } from "./lib/sensorSupabase.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
@@ -24,6 +21,10 @@ const upload = multer({
 
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "2mb" }));
+app.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  next();
+});
 
 // ─── Health ──────────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
@@ -36,9 +37,10 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-// ─── Sub-routers (existing paths, used by frontend) ──────────────────────────
-app.use("/api/kiosk", kioskRouter);
-app.use("/api/admin", adminRouter);
+// ─── Sub-routers ─────────────────────────────────────────────────────────────
+app.use("/api/auth", authRouter);
+app.use("/api/kiosk", kioskRouter);     // worker token enforced inside kioskRouter
+app.use("/api/admin", adminRouter);     // admin JWT enforced inside adminRouter
 
 // ─── Spec-required flat routes (Phase 1 checklist) ───────────────────────────
 // These mirror the kiosk/admin sub-routes so the spec API paths work too.
@@ -47,7 +49,7 @@ app.use("/api/admin", adminRouter);
  * POST /api/bind-wristband
  * Body: { worker_id, wristband_qr, kiosk_location? }
  */
-app.post("/api/bind-wristband", async (req, res) => {
+app.post("/api/bind-wristband", workerAuthMiddleware, async (req, res) => {
   const { worker_id, wristband_qr, kiosk_location } = req.body || {};
   if (!worker_id || !wristband_qr) {
     return res.status(400).json({ ok: false, error: "worker_id and wristband_qr are required." });
@@ -66,7 +68,7 @@ app.post("/api/bind-wristband", async (req, res) => {
  * Spec-required flat route — same real pipeline as /api/kiosk/scan.
  * Multipart: image (file) + wristband_qr (field)
  */
-app.post("/api/scan", upload.single("image"), async (req, res) => {
+app.post("/api/scan", workerAuthMiddleware, upload.single("image"), async (req, res) => {
   const wristband_qr = String(req.body?.wristband_qr || "").trim();
   if (!wristband_qr) return res.status(400).json({ ok: false, error: "wristband_qr required." });
   if (!req.file?.buffer) return res.status(400).json({ ok: false, error: "image file required." });
@@ -138,6 +140,49 @@ app.get("/api/ambient/latest", async (req, res) => {
   return res.json(result);
 });
 
+/**
+ * GET /api/ambient/external-latest?limit=30
+ * Returns live data from friend's h2s_datas Supabase table with ADC -> ppm calibration.
+ */
+app.get("/api/ambient/external-latest", async (req, res) => {
+  if (!isSensorConfigured || !sensorSupabaseClient) {
+    return res.json({ ok: false, error: "External sensor not configured" });
+  }
+
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit || 30)));
+
+  try {
+    const { data, error } = await sensorSupabaseClient
+      .from("h2s_datas")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      return res.json({ ok: false, error: error.message });
+    }
+
+    const recent = (data || []).map((row) => {
+      const cal = adcToPpm(row.adc);
+      return {
+        ambient_h2s_ppm: cal.ppm,
+        temperature_c: row.temp != null ? Number(row.temp) : null,
+        humidity_percent: row.humidity != null ? Number(row.humidity) : null,
+        pressure: row.pressure != null ? Number(row.pressure) : null,
+        slot_id: row.slot_id ? String(row.slot_id).trim() : null,
+        adc_raw: cal.adc,
+        risk_status: cal.status,
+        timestamp: row.created_at,
+      };
+    });
+
+    const latest = recent.length ? recent[0] : null;
+    return res.json({ ok: true, latest, recent });
+  } catch (err) {
+    return res.json({ ok: false, error: err.message || "Failed to query external sensor" });
+  }
+});
+
 
 /**
  * GET /api/workers
@@ -170,7 +215,7 @@ app.get("/api/workers/:id/history", async (req, res) => {
  * POST /api/close-shift
  * Body: { wristband_qr }
  */
-app.post("/api/close-shift", async (req, res) => {
+app.post("/api/close-shift", workerAuthMiddleware, async (req, res) => {
   const { wristband_qr } = req.body || {};
   if (!wristband_qr) return res.status(400).json({ ok: false, error: "wristband_qr required." });
   const result = await store.closeShift({ wristband_qr: String(wristband_qr).trim() });

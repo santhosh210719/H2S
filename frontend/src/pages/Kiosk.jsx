@@ -1,13 +1,23 @@
 import { useCallback, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { CameraCapture, QrScanner, makeSyntheticBadge } from "../lib/camera.jsx";
 import { apiUrl } from "../lib/supabase.js";
 
 const KIOSK_ID = "KIOSK-MUSTER-01";
 
+/** Get the worker session token from sessionStorage. */
+function getWorkerToken() {
+  return sessionStorage.getItem("workerToken") || "";
+}
+
+/** POST helper — automatically attaches the worker Bearer token. */
 async function postJson(path, body) {
   const res = await fetch(apiUrl(path), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${getWorkerToken()}`,
+    },
     body: JSON.stringify(body),
   });
   const data = await res.json();
@@ -25,14 +35,18 @@ function RiskPill({ band }) {
   return <span className={`pill ${band}`}>{labels[band] || band}</span>;
 }
 
+function normalizeWorkerCode(value) {
+  return String(value).trim().replace(/^WRK-/i, "WKR-");
+}
+
 // ── Screen A: Scan Worker ID ──────────────────────────────────────────────────
 function ScreenA({ onWorker }) {
   const [typed, setTyped] = useState("");
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState(true);
   const [err, setErr] = useState("");
 
   function submit(val) {
-    const v = String(val).trim();
+    const v = normalizeWorkerCode(val);
     if (!v) return;
     setErr("");
     onWorker(v);
@@ -45,42 +59,42 @@ function ScreenA({ onWorker }) {
       <h2>Scan Worker ID</h2>
       <p className="muted">Point the worker's ID badge QR at the kiosk camera, or type the ID below.</p>
 
-      <div className="kiosk-input-group">
-        <input
-          id="worker-id-input"
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit(typed)}
-          placeholder="e.g. WKR-1001"
-          autoFocus
-        />
-        <button id="worker-id-submit" className="btn primary" onClick={() => submit(typed)} disabled={!typed.trim()}>
-          Confirm →
-        </button>
-      </div>
-
-      <div className="qr-toggle">
-        <button className="btn ghost" onClick={() => setScanning((s) => !s)}>
-          {scanning ? "▲ Hide camera" : "▼ Use QR camera"}
-        </button>
-      </div>
+      {/* Primary Path: Live Camera Feed (Open by default) */}
       {scanning && (
-        <QrScanner
-          active
-          demoCodes={["WKR-1001", "WKR-1002", "WKR-1003"]}
-          onDecode={(text) => {
-            setScanning(false);
-            submit(text);
-          }}
-        />
+        <div className="qr-scanner-container">
+          <QrScanner
+            active
+            onDecode={(text) => {
+              submit(text);
+            }}
+          />
+        </div>
       )}
-      {err && <p className="warn" style={{ marginTop: 12 }}>{err}</p>}
 
-      <div className="seed-hint card" style={{ marginTop: 24 }}>
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          <strong>Demo IDs:</strong> WKR-1001 (Arun Kumar) · WKR-1002 (Priya Nair) · WKR-1003 (Rahul Shetty)
-        </p>
+      <div className="qr-toggle" style={{ margin: "4px 0 12px" }}>
+        <button className="btn ghost" style={{ fontSize: 12 }} onClick={() => setScanning((s) => !s)}>
+          {scanning ? "📷 Pause Camera" : "📷 Open QR Camera"}
+        </button>
       </div>
+
+      {/* Secondary Fallback: Typed Input */}
+      <div className="qr-fallback-section">
+        <span className="qr-fallback-title">Manual Fallback (if QR code unreadable):</span>
+        <div className="kiosk-input-group">
+          <input
+            id="worker-id-input"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit(typed)}
+            placeholder="e.g. WKR-1001"
+          />
+          <button id="worker-id-submit" className="btn ghost" onClick={() => submit(typed)} disabled={!typed.trim()}>
+            Confirm →
+          </button>
+        </div>
+      </div>
+
+      {err && <p className="warn" style={{ marginTop: 12 }}>{err}</p>}
     </div>
   );
 }
@@ -88,7 +102,7 @@ function ScreenA({ onWorker }) {
 // ── Screen B: Scan Wristband QR ───────────────────────────────────────────────
 function ScreenB({ workerCode, onBound, onBack }) {
   const [typed, setTyped] = useState("");
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -117,51 +131,50 @@ function ScreenB({ workerCode, onBound, onBack }) {
       <div className="screen-icon">🔗</div>
       <h2>Scan Wristband QR</h2>
       <p className="muted">
-        Worker: <strong>{workerCode}</strong> · Scan the factory QR on a new wristband.
+        Worker: <strong>{workerCode}</strong> · Point the wristband's factory QR at the camera.
       </p>
 
-      <div className="kiosk-input-group">
-        <input
-          id="wristband-qr-input"
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && bind(typed)}
-          placeholder="e.g. WB-2026-000482"
-        />
-        <button
-          id="wristband-bind-btn"
-          className="btn primary"
-          disabled={busy || !typed.trim()}
-          onClick={() => bind(typed)}
-        >
-          {busy ? "Binding…" : "Bind →"}
-        </button>
-      </div>
-
-      <div className="qr-toggle">
-        <button className="btn ghost" onClick={() => setScanning((s) => !s)}>
-          {scanning ? "▲ Hide camera" : "▼ Use QR camera"}
-        </button>
-      </div>
+      {/* Primary Path: Live Camera Feed (Open by default) */}
       {scanning && (
-        <QrScanner
-          active
-          demoCodes={["WB-2026-000481", "WB-2026-000482", "WB-2026-000483", "WB-2026-000484"]}
-          onDecode={(text) => {
-            setScanning(false);
-            bind(text);
-          }}
-        />
+        <div className="qr-scanner-container">
+          <QrScanner
+            active
+            onDecode={(text) => {
+              bind(text);
+            }}
+          />
+        </div>
       )}
-      {err && <p className="warn" style={{ marginTop: 12 }}>{err}</p>}
 
-      <div className="seed-hint card" style={{ marginTop: 24 }}>
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-          <strong>Available bands:</strong> WB-2026-000481 · 000482 · 000483 · 000484
-          <br />
-          <strong>Rejected demo:</strong> WB-2026-000499 (already used)
-        </p>
+      <div className="qr-toggle" style={{ margin: "4px 0 12px" }}>
+        <button className="btn ghost" style={{ fontSize: 12 }} onClick={() => setScanning((s) => !s)}>
+          {scanning ? "📷 Pause Camera" : "📷 Open QR Camera"}
+        </button>
       </div>
+
+      {/* Secondary Fallback: Typed Input */}
+      <div className="qr-fallback-section">
+        <span className="qr-fallback-title">Manual Fallback (if QR code unreadable):</span>
+        <div className="kiosk-input-group">
+          <input
+            id="wristband-qr-input"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && bind(typed)}
+            placeholder="e.g. WB-2026-000482"
+          />
+          <button
+            id="wristband-bind-btn"
+            className="btn ghost"
+            disabled={busy || !typed.trim()}
+            onClick={() => bind(typed)}
+          >
+            {busy ? "Binding…" : "Bind →"}
+          </button>
+        </div>
+      </div>
+
+      {err && <p className="warn" style={{ marginTop: 12 }}>{err}</p>}
 
       <button className="btn ghost" style={{ marginTop: 16 }} onClick={onBack}>
         ← Back to worker ID
@@ -184,7 +197,11 @@ function ScreenC({ bandQr, workerName, onResult, onQualityFail, onBack }) {
       fd.append("image", blob, "badge.jpg");
       fd.append("wristband_qr", bandQr);
       fd.append("kiosk_id", KIOSK_ID);
-      const res = await fetch(apiUrl("/api/kiosk/scan"), { method: "POST", body: fd });
+      const res = await fetch(apiUrl("/api/kiosk/scan"), {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${getWorkerToken()}` },
+        body: fd,
+      });
       const data = await res.json();
       if (res.status === 422 || data.code === "QUALITY_FAIL") {
         onQualityFail(data.error || "Image unclear — please re-scan");
@@ -228,7 +245,7 @@ function ScreenC({ bandQr, workerName, onResult, onQualityFail, onBack }) {
 
       <div className="synthetic-panel card" style={{ marginTop: 16 }}>
         <p style={{ margin: "0 0 8px", fontSize: 13 }} className="muted">
-          No physical badge? Generate a synthetic 2-zone image for demo:
+          No physical badge? Use the synthetic image generator:
         </p>
         <label className="slider-label">
           Simulated exposure (darkness) — <strong>{relDark.toFixed(2)}</strong>
@@ -282,15 +299,17 @@ function ScreenD({ result, workerName, bandQr, onScanAgain, onCloseShift }) {
     }
   }
 
+  // Official H2S-DOSAI reference chart colour mapping
   const bandColors = {
-    fresh: "#f4efe6",
-    low: "#e6d3b0",
-    medium: "#c9a227",
-    high: "#6b7a32",
-    very_high: "#1a1612",
+    fresh:     "#F0E9E2",  // off-white / cream
+    low:       "#DCC08A",  // pale tan
+    medium:    "#B8902F",  // gold / amber
+    high:      "#5C4A1E",  // olive / dark brown
+    very_high: "#231A24",  // near-black
   };
   const bgColor = band ? bandColors[band] || "var(--panel)" : "var(--panel)";
-  const isLight = band === "fresh" || band === "low" || band === "medium";
+  // Fresh & Low are light backgrounds → dark text; Medium/High/Very High are dark → white text
+  const isLight = band === "fresh" || band === "low";
 
   return (
     <div className="kiosk-screen">
@@ -333,12 +352,15 @@ function ScreenD({ result, workerName, bandQr, onScanAgain, onCloseShift }) {
         </div>
       )}
 
-      <div className="row" style={{ marginTop: 16, justifyContent: "center" }}>
+      <div className="row" style={{ marginTop: 16, justifyContent: "center", flexWrap: "wrap", gap: 10 }}>
         <button id="scan-again-btn" className="btn" onClick={onScanAgain}>
           📸 Scan again
         </button>
+        <button id="finish-btn" className="btn primary" onClick={() => navigate("/worker-dashboard")}>
+          ✅ Return to Dashboard (Shift remains open)
+        </button>
         <button id="close-shift-btn" className="btn danger" disabled={closeBusy} onClick={handleClose}>
-          {closeBusy ? "Closing…" : "🔒 Close shift"}
+          {closeBusy ? "Closing…" : "🔒 Close shift & Lock band"}
         </button>
       </div>
     </div>
@@ -382,7 +404,7 @@ function ScreenE({ reason, onRescan, onBack }) {
 // ── Close Shift Flow (independent) ───────────────────────────────────────────
 function CloseShiftFlow({ onDone }) {
   const [typed, setTyped] = useState("");
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
@@ -409,24 +431,35 @@ function CloseShiftFlow({ onDone }) {
       <h2>Close Shift & Lock Wristband</h2>
       <p className="muted">Scan or type the wristband QR to permanently mark it used.</p>
 
-      <div className="kiosk-input-group">
-        <input
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && close(typed)}
-          placeholder="e.g. WB-2026-000481"
-        />
-        <button className="btn danger" disabled={busy || !typed.trim()} onClick={() => close(typed)}>
-          {busy ? "Closing…" : "Lock QR"}
+      {/* Primary Path: Live Camera Feed */}
+      {scanning && (
+        <div className="qr-scanner-container">
+          <QrScanner active onDecode={(t) => close(t)} />
+        </div>
+      )}
+
+      <div className="qr-toggle" style={{ margin: "4px 0 12px" }}>
+        <button className="btn ghost" style={{ fontSize: 12 }} onClick={() => setScanning((s) => !s)}>
+          {scanning ? "📷 Pause Camera" : "📷 Open QR Camera"}
         </button>
       </div>
 
-      <div className="qr-toggle">
-        <button className="btn ghost" onClick={() => setScanning((s) => !s)}>
-          {scanning ? "▲ Hide camera" : "▼ Use QR camera"}
-        </button>
+      {/* Secondary Fallback: Typed Input */}
+      <div className="qr-fallback-section">
+        <span className="qr-fallback-title">Manual Fallback (if QR code unreadable):</span>
+        <div className="kiosk-input-group">
+          <input
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && close(typed)}
+            placeholder="e.g. WB-2026-000481"
+          />
+          <button className="btn danger" disabled={busy || !typed.trim()} onClick={() => close(typed)}>
+            {busy ? "Closing…" : "Lock QR"}
+          </button>
+        </div>
       </div>
-      {scanning && <QrScanner active onDecode={(t) => { setScanning(false); close(t); }} />}
+
       {msg && <div className={`banner ${msg.ok ? "" : "warn"}`} style={{ marginTop: 12 }}>{msg.text}</div>}
 
       <button className="btn ghost" style={{ marginTop: 16 }} onClick={onDone}>
@@ -438,6 +471,7 @@ function CloseShiftFlow({ onDone }) {
 
 // ── Root Kiosk Page ───────────────────────────────────────────────────────────
 export function KioskPage() {
+  const navigate = useNavigate();
   // mode: idle | start-a | start-b | scan-c | result-d | quality-e | close
   const [mode, setMode] = useState("idle");
   const [workerCode, setWorkerCode] = useState("");
@@ -445,6 +479,14 @@ export function KioskPage() {
   const [bandQr, setBandQr] = useState("");
   const [scanResult, setScanResult] = useState(null);
   const [qualityReason, setQualityReason] = useState("");
+
+  const loggedInId = sessionStorage.getItem("workerId") || "";
+
+  function endSession() {
+    sessionStorage.removeItem("workerToken");
+    sessionStorage.removeItem("workerId");
+    navigate("/worker-login", { replace: true });
+  }
 
   function reset() {
     setMode("idle");
@@ -459,7 +501,27 @@ export function KioskPage() {
     <div className="kiosk-shell">
       <div className="kiosk-header">
         <span className="kiosk-badge">MRPL Muster Kiosk · {KIOSK_ID}</span>
-        <span className="kiosk-tagline">Fixed station — worker phones are not used for scanning</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {loggedInId && (
+            <span className="kiosk-tagline">
+              Logged in: <strong>{loggedInId}</strong>
+            </span>
+          )}
+          <button
+            className="btn ghost"
+            style={{ fontSize: 12, padding: "6px 14px" }}
+            onClick={() => navigate("/worker-dashboard")}
+          >
+            ← Dashboard
+          </button>
+          <button
+            className="btn danger"
+            style={{ fontSize: 12, padding: "6px 14px" }}
+            onClick={endSession}
+          >
+            🔒 Log out
+          </button>
+        </div>
       </div>
 
       {/* Progress stepper */}

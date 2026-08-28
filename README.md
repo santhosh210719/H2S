@@ -71,23 +71,32 @@ npm run dev
 - Admin dashboard: http://localhost:5173/admin
 - API health: http://localhost:4000/api/health
 
-### Supabase setup (first time)
+## Onboarding
 
+### First admin user
 1. Create a project at [supabase.com](https://supabase.com).
-2. In the SQL editor, run `supabase/migrations/001_init.sql` then `002_storage.sql`.
+2. In the SQL editor, run `supabase/migrations/001_init.sql` then `002_storage.sql` then `003_worker_auth.sql`.
 3. Go to **Auth → Users** and create an admin email/password user.
 4. Enable **Realtime** on tables `scan_logs`, `shift_bindings`, `live_ambient_readings`.
 5. Copy project URL, anon key, and service role key into `.env`.
 
-### Seed QR codes (in-memory store, no Supabase needed)
+### Creating a worker account
+Only an admin can onboard workers. After logging into `/admin-login`:
 
-| Code | Who / What |
-|------|-----------|
-| `WKR-1001` | Arun Kumar · CDU |
-| `WKR-1002` | Priya Nair · SRU |
-| `WKR-1003` | Rahul Shetty · Utilities |
-| `WB-2026-000481` … `000484` | Available wristbands |
-| `WB-2026-000499` | Already used — will be rejected |
+```bash
+curl -X POST http://localhost:4000/api/admin/workers \
+  -H "Authorization: Bearer <supabase-admin-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{ "worker_id": "WKR-0001", "name": "Firstname Lastname", "department": "CDU", "shift": "A", "pin": "1234" }'
+```
+
+When Supabase is not configured the API uses an in-memory store — workers created
+via the API persist for the lifetime of the Node process.
+
+### Worker kiosk login
+- Worker goes to `/worker-login` on the kiosk device.
+- Enters their Worker ID and 4–6 digit PIN.
+- On success, the kiosk session opens `/kiosk` for that shift.
 
 ## API routes
 
@@ -104,12 +113,6 @@ npm run dev
 | POST | `/api/kiosk/close` | (frontend alias) |
 | GET | `/api/admin/overview` | Active shifts + recent scans |
 
-## Demo flow
-
-1. **Kiosk → Start shift** → type `WKR-1001` → type `WB-2026-000482` → Bind.
-2. **Mid-shift scan** → type `WB-2026-000482` → capture or use synthetic badge slider → dose result appears.
-3. **Close shift** → wristband marked `used`. Scanning `WB-2026-000499` or any closed band hard-fails.
-4. **Admin** → log in → click any worker row → history chart + scan log.
 
 ## GitHub
 

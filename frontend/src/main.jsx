@@ -3,8 +3,20 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Link, Navigate, Route, Routes } from "react-router-dom";
 import { AdminPage } from "./pages/Admin.jsx";
 import { KioskPage } from "./pages/Kiosk.jsx";
+import { WorkerLoginPage } from "./pages/WorkerLogin.jsx";
+import { WorkerDashboardPage } from "./pages/WorkerDashboard.jsx";
 import "./styles.css";
 
+// ── Worker session guard ──────────────────────────────────────────────────────
+function WorkerRoute({ children }) {
+  const token = sessionStorage.getItem("workerToken");
+  if (!token) {
+    return <Navigate to="/worker-login" replace />;
+  }
+  return children;
+}
+
+// ── Home page ─────────────────────────────────────────────────────────────────
 function Home() {
   return (
     <div className="shell" style={{ textAlign: "center", paddingTop: 80 }}>
@@ -22,23 +34,26 @@ function Home() {
         H₂S-DOSAI
       </div>
       <p className="brand" style={{ marginBottom: 8 }}>SIH 26118 · MRPL</p>
-      <p className="muted" style={{ maxWidth: 520, margin: "0 auto 16px", lineHeight: 1.7 }}>
-        Passive colorimetric H₂S exposure-dosimeter wristband — scanned only at fixed kiosk
-        stations at refinery muster points, not on worker phones.
+      <p className="muted" style={{ maxWidth: 520, margin: "0 auto 40px", lineHeight: 1.7 }}>
+        Passive colorimetric H₂S exposure-dosimeter wristband — scanned only at fixed
+        kiosk stations at refinery muster points.
       </p>
       <div className="home-links">
-        <Link to="/kiosk">
+        <Link to="/worker-login" id="home-worker-link">
           <span style={{ fontSize: "1.5rem" }}>📸</span>
-          Open kiosk station
+          Worker login
+          <small style={{ display: "block", fontSize: "0.7em", opacity: 0.7, marginTop: 4, fontWeight: 400 }}>
+            View your dashboard & scan your wristband badge
+          </small>
         </Link>
-        <Link to="/admin">
+        <Link to="/admin-login" id="home-admin-link">
           <span style={{ fontSize: "1.5rem" }}>🛡</span>
-          Open admin dashboard
+          Admin login
+          <small style={{ display: "block", fontSize: "0.7em", opacity: 0.7, marginTop: 4, fontWeight: 400 }}>
+            Safety desk · manage workers & view exposure data
+          </small>
         </Link>
       </div>
-      <p className="muted" style={{ marginTop: 48, fontSize: 12 }}>
-        Demo: open both in two browser windows for a split-screen live demo
-      </p>
     </div>
   );
 }
@@ -49,13 +64,39 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <div className="topbar">
         <Link to="/" className="brand" style={{ textDecoration: "none" }}>H2S-DOSAI</Link>
         <span className="muted" style={{ fontSize: 12 }}>
-          Kiosk scanning only · /kiosk + /admin
+          Kiosk scanning only · SIH 26118 · MRPL
         </span>
       </div>
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/kiosk" element={<KioskPage />} />
+
+        {/* Worker auth */}
+        <Route path="/worker-login" element={<WorkerLoginPage />} />
+
+        {/* Worker dashboard — requires valid worker session */}
+        <Route
+          path="/worker-dashboard"
+          element={
+            <WorkerRoute>
+              <WorkerDashboardPage />
+            </WorkerRoute>
+          }
+        />
+
+        {/* Kiosk — requires valid worker session */}
+        <Route
+          path="/kiosk"
+          element={
+            <WorkerRoute>
+              <KioskPage />
+            </WorkerRoute>
+          }
+        />
+
+        {/* Admin portal */}
+        <Route path="/admin-login" element={<AdminPage />} />
         <Route path="/admin" element={<AdminPage />} />
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
